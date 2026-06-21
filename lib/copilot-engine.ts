@@ -1,3 +1,5 @@
+import { schemaTables } from "./content";
+
 export type CopilotResult = {
   sql?: string;
   notes: string[];
@@ -10,6 +12,36 @@ export type SafetyCheck = {
 };
 
 const blockedKeywords = ["DELETE", "UPDATE", "DROP", "TRUNCATE"];
+const ignoredIdentifiers = new Set([
+  "ASC",
+  "AS",
+  "AND",
+  "BETWEEN",
+  "BY",
+  "CURRENT_DATE",
+  "CURRENT_TIMESTAMP",
+  "DATE",
+  "DATE_SUB",
+  "DATE_TRUNC",
+  "DESC",
+  "DISTINCT",
+  "FROM",
+  "GROUP",
+  "INTERVAL",
+  "LIMIT",
+  "MONTH",
+  "ON",
+  "OR",
+  "ORDER",
+  "SELECT",
+  "SUM",
+  "COUNT",
+  "TIMESTAMP_SUB",
+  "WEEK",
+  "WHERE"
+]);
+const piiFieldPattern =
+  /(^|_)(email|phone|ssn|social_security|address|ip_address|birthdate|dob|first_name|last_name|full_name)($|_)/i;
 
 export function generateGoogleSql(question: string): CopilotResult {
   const normalized = question.toLowerCase();
@@ -128,17 +160,165 @@ export function validateGoogleSql(sql: string): SafetyCheck[] {
         : "Add a LIMIT or partition-friendly date filter before execution.",
       status: hasLimitOrDateFilter ? "pass" : "warn"
     },
-    {
+    validateReferencedColumns(sql),
+    validatePiiExposure(sql)
+  ];
+}
+
+function validateReferencedColumns(sql: string): SafetyCheck {
+  const tables = getReferencedTables(sql);
+  const knownTables = tables
+    .map((tableName) => schemaTables.find((table) => table.name === tableName))
+    .filter((table) => table !== undefined);
+
+  if (!knownTables.length) {
+    return {
       label: "Schema-validated columns",
       detail:
-        "All referenced columns exist in analytics.orders.",
-      status: "pass"
-    },
-    {
-      label: "No PII exposure risk",
-      detail:
-        "Query does not select email, phone, or other personally identifiable fields.",
-      status: "pass"
+        "No known schema table was detected; add a schema context before execution.",
+      status: "warn"
+    };
+  }
+
+  const allowedColumns = new Set(
+    knownTables.flatMap((table) => table.fields.map((field) => field.name))
+  );
+  const aliases = getAliases(sql);
+  const referencedColumns = getReferencedColumnNames(sql);
+  const unknownColumns = referencedColumns.filter(
+    (column) => !allowedColumns.has(column) && !aliases.has(column)
+  );
+
+  if (unknownColumns.length) {
+    return {
+      label: "Schema-validated columns",
+      detail: `Unknown column reference detected: ${unknownColumns.join(", ")}.`,
+      status: "warn"
+    };
+  }
+
+  return {
+    label: "Schema-validated columns",
+    detail: `Validated ${referencedColumns.length} referenced column${
+      referencedColumns.length === 1 ? "" : "s"
+    } against ${knownTables.map((table) => table.name).join(", ")}.`,
+    status: "pass"
+  };
+}
+
+function validatePiiExposure(sql: string): SafetyCheck {
+  const selectedColumns = getSelectedColumnNames(sql);
+  const selectedStar = /\bSELECT\s+\*/i.test(sql);
+  const tables = getReferencedTables(sql);
+  const knownTables = tables
+    .map((tableName) => schemaTables.find((table) => table.name === tableName))
+    .filter((table) => table !== undefined);
+  const piiColumns = selectedColumns.filter((column) =>
+    piiFieldPattern.test(column)
+  );
+
+  if (selectedStar) {
+    const sensitiveSchemaFields = knownTables.flatMap((table) =>
+      table.fields
+        .map((field) => field.name)
+        .filter((fieldName) => piiFieldPattern.test(fieldName))
+    );
+
+    if (sensitiveSchemaFields.length) {
+      piiColumns.push(...sensitiveSchemaFields);
     }
-  ];
+  }
+
+  const uniquePiiColumns = Array.from(new Set(piiColumns));
+  if (uniquePiiColumns.length) {
+    return {
+      label: "No PII exposure risk",
+      detail: `Potential PII column selected: ${uniquePiiColumns.join(", ")}.`,
+      status: "warn"
+    };
+  }
+
+  return {
+    label: "No PII exposure risk",
+    detail:
+      "No selected email, phone, address, or other high-risk PII fields detected.",
+    status: "pass"
+  };
+}
+
+function getReferencedTables(sql: string) {
+  const tables = Array.from(
+    sql.matchAll(/\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/gi),
+    (match) => match[1]
+  );
+
+  return Array.from(new Set(tables));
+}
+
+function getReferencedColumnNames(sql: string) {
+  const stripped = stripSqlLiteralsAndTables(sql);
+  const candidates = Array.from(
+    stripped.matchAll(/\b([a-z_][a-z0-9_]*)\b/gi),
+    (match) => match[1]
+  );
+  const tableParts = new Set(
+    schemaTables.flatMap((table) => table.name.split("."))
+  );
+  const tableAliases = getTableAliases(sql);
+
+  return Array.from(
+    new Set(
+      candidates
+        .filter((identifier) => !ignoredIdentifiers.has(identifier.toUpperCase()))
+        .filter((identifier) => !tableParts.has(identifier))
+        .filter((identifier) => !tableAliases.has(identifier))
+        .filter((identifier) => Number.isNaN(Number(identifier)))
+    )
+  );
+}
+
+function getSelectedColumnNames(sql: string) {
+  const selectMatch = sql.match(/\bSELECT\b([\s\S]+?)\bFROM\b/i);
+  if (!selectMatch) {
+    return [];
+  }
+
+  const projection = stripSqlLiteralsAndTables(selectMatch[1]);
+  const aliases = getAliases(sql);
+
+  return Array.from(
+    new Set(
+      Array.from(
+        projection.matchAll(/\b([a-z_][a-z0-9_]*)\b/gi),
+        (match) => match[1]
+      )
+        .filter((identifier) => !ignoredIdentifiers.has(identifier.toUpperCase()))
+        .filter((identifier) => !aliases.has(identifier))
+    )
+  );
+}
+
+function getAliases(sql: string) {
+  return new Set(
+    Array.from(sql.matchAll(/\bAS\s+([a-z_][a-z0-9_]*)\b/gi), (match) =>
+      match[1]
+    )
+  );
+}
+
+function getTableAliases(sql: string) {
+  return new Set(
+    Array.from(
+      sql.matchAll(/\b(?:FROM|JOIN)\s+`?[\w.-]+`?\s+(?:AS\s+)?([a-z_][a-z0-9_]*)\b/gi),
+      (match) => match[1]
+    ).filter((alias) => !ignoredIdentifiers.has(alias.toUpperCase()))
+  );
+}
+
+function stripSqlLiteralsAndTables(sql: string) {
+  return sql
+    .replace(/`[^`]+`/g, " ")
+    .replace(/'[^']*'/g, " ")
+    .replace(/"[^"]*"/g, " ")
+    .replace(/--.*$/gm, " ");
 }

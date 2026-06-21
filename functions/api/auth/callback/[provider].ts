@@ -1,6 +1,7 @@
 import {
   SESSION_TTL_SECONDS,
   createSessionCookie,
+  getAuthRoleForEmail,
   getProviderCredentials,
   isAuthProvider,
   signAuthPayload,
@@ -10,10 +11,14 @@ import {
   type AuthSession,
   type OAuthState
 } from "../../../../lib/auth";
+import {
+  upsertAuthenticatedUser,
+  type AdminStorageEnv
+} from "../../../../lib/admin-store";
 
 type AuthCallbackContext = {
   request: Request;
-  env: AuthEnv;
+  env: AuthEnv & AdminStorageEnv;
   params: {
     provider?: string;
   };
@@ -67,17 +72,32 @@ export async function onRequestGet(context: AuthCallbackContext) {
       provider === "google"
         ? await fetchGoogleProfile(code, providerCredentials, callbackUrl)
         : await fetchGithubProfile(code, providerCredentials, callbackUrl);
-    const session = await signAuthPayload(
-      {
-        provider,
-        providerId: profile.providerId,
-        email: profile.email,
-        name: profile.name,
-        avatarUrl: profile.avatarUrl,
-        expiresAt: Date.now() + SESSION_TTL_SECONDS * 1000
-      } satisfies AuthSession,
-      secret
-    );
+    const sessionPayload = {
+      provider,
+      providerId: profile.providerId,
+      email: profile.email,
+      name: profile.name,
+      avatarUrl: profile.avatarUrl,
+      role: getAuthRoleForEmail(profile.email, context.env),
+      expiresAt: Date.now() + SESSION_TTL_SECONDS * 1000
+    } satisfies AuthSession;
+
+    try {
+      await upsertAuthenticatedUser(context.env, sessionPayload);
+    } catch (storageError) {
+      console.error(
+        JSON.stringify({
+          event: "auth_user_persist_failed",
+          provider,
+          message:
+            storageError instanceof Error
+              ? storageError.message
+              : "Unknown storage error"
+        })
+      );
+    }
+
+    const session = await signAuthPayload(sessionPayload, secret);
     const destination = new URL(state.returnTo, url.origin);
     destination.searchParams.set("login", "success");
 

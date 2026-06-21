@@ -272,6 +272,21 @@ export function getPhase2Health() {
   };
 }
 
+export function getPhase3Health() {
+  const phase2 = getPhase2Health();
+
+  return {
+    ...phase2,
+    phase: "phase-3",
+    checks: [
+      ...phase2.checks,
+      "admin-rbac",
+      "d1-admin-store",
+      "audit-log"
+    ]
+  };
+}
+
 function extractReferencedTables(sql: string) {
   return Array.from(sql.matchAll(/`([\w.-]+)`/g), (match) => match[1]);
 }
