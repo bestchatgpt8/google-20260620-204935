@@ -10,6 +10,7 @@ import {
   requireAdminSession
 } from "../lib/auth-request";
 import type { AdminStorageEnv } from "../lib/admin-store";
+import type { BigQueryEnv } from "../lib/bigquery";
 import { onRequestGet as onAuthStartGet } from "../functions/api/auth/start/[provider]";
 import { onRequestGet as onAuthCallbackGet } from "../functions/api/auth/callback/[provider]";
 import {
@@ -20,13 +21,15 @@ import { onRequestGet as onAuthSessionGet } from "../functions/api/auth/session"
 import { onRequestGet as onAdminStateGet } from "../functions/api/admin/state";
 import { onRequestPatch as onAdminFeatureFlagPatch } from "../functions/api/admin/feature-flags/[id]";
 import { onRequestPost as onAdminRollbackPost } from "../functions/api/admin/rollback";
+import { onRequestPost as onQueryDryRunPost } from "../functions/api/query/dry-run";
 
 type AssetFetcher = {
   fetch(request: Request): Promise<Response>;
 };
 
 type WorkerEnv = AuthEnv &
-  AdminStorageEnv & {
+  AdminStorageEnv &
+  BigQueryEnv & {
     ASSETS: AssetFetcher;
   };
 
@@ -182,6 +185,13 @@ function matchApiRoute(
     return {
       allowedMethods: ["POST"],
       handler: () => onAdminRollbackPost({ request, env })
+    };
+  }
+
+  if (url.pathname === "/api/query/dry-run") {
+    return {
+      allowedMethods: ["POST"],
+      handler: () => onQueryDryRunPost({ request, env })
     };
   }
 

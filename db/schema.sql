@@ -40,6 +40,23 @@ CREATE TABLE IF NOT EXISTS run_reviews (
   submitted_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS query_runs (
+  id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL,
+  actor_email TEXT,
+  sql TEXT NOT NULL,
+  status TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  estimated_cost_usd REAL NOT NULL,
+  scanned_bytes INTEGER NOT NULL,
+  expected_runtime_ms INTEGER NOT NULL,
+  referenced_tables_json TEXT NOT NULL,
+  checks_json TEXT NOT NULL,
+  error_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
   actor_email TEXT NOT NULL,

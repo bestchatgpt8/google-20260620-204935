@@ -20,6 +20,24 @@ logging, and API-backed rollout controls.
 - If D1 is not bound, `/admin` clearly enters seed preview mode and mutations
   return `storage_not_configured`.
 
+## Phase 3B Scope
+
+- `/api/query/dry-run` accepts generated GoogleSQL and performs a backend
+  execution gate check before any live execution path exists.
+- When BigQuery service-account credentials are configured, the API calls the
+  BigQuery jobs dry-run endpoint and returns live scanned bytes, estimated cost,
+  runtime estimate, referenced tables, and safety checks.
+- When BigQuery credentials are missing, the API returns an explicitly marked
+  `simulated` dry-run so the public demo remains usable without pretending to
+  have contacted BigQuery.
+- D1 now stores every dry-run in `query_runs` and mirrors it into
+  `run_reviews` so admin review queues can see approved, approval-required, and
+  blocked runs.
+- Dry-run audit events record actor, workspace, query type, status, mode,
+  scanned bytes, and estimated cost.
+- The frontend `Run` button now calls the backend API and displays whether the
+  result came from a live BigQuery dry-run or simulated fallback.
+
 ## Deployment Setup
 
 Create the database and apply the schema:
@@ -38,7 +56,15 @@ GOOGLE_CLIENT_ID=<google oauth client>
 GOOGLE_CLIENT_SECRET=<google oauth secret>
 GITHUB_CLIENT_ID=<github oauth client>
 GITHUB_CLIENT_SECRET=<github oauth secret>
+BIGQUERY_PROJECT_ID=<gcp project id>
+BIGQUERY_CLIENT_EMAIL=<service account email>
+BIGQUERY_PRIVATE_KEY=<service account PKCS#8 private key>
+BIGQUERY_LOCATION=US
+BIGQUERY_MAX_BYTES_BILLED=<optional byte limit>
 ```
+
+The BigQuery service account needs permission to create jobs in the project and
+read metadata/data for the datasets that GoogleSQL.com should validate.
 
 ## Acceptance Criteria
 
@@ -48,11 +74,13 @@ GITHUB_CLIENT_SECRET=<github oauth secret>
 - Feature rollout mutations persist in D1 and appear after refresh.
 - Rollout and rollback actions produce audit log rows.
 - D1-free preview deployments remain readable but cannot persist admin actions.
+- The public run gate returns live BigQuery dry-run data when credentials are
+  configured and explicit simulated data when they are not.
 - `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build` pass
   before gray release.
 
 ## Next Phase
 
-Phase 3B should connect the run gate to real BigQuery dry-run/job APIs, add
-workspace-scoped schema management, and introduce explicit approval actions for
-queued query runs.
+Phase 3C should add workspace-scoped schema management, explicit admin approval
+actions for queued query runs, and a separate guarded path for real query
+execution after dry-run approval.
