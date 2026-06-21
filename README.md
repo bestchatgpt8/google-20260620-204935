@@ -1,15 +1,19 @@
 # GoogleSQL.com
 
-Phase 1 builds **GoogleSQL Copilot**: free tools and SEO content for BigQuery
-users.
+Phase 2 builds on **GoogleSQL Copilot** with admin release controls, dry-run
+execution gates, and rollback readiness for BigQuery workflows.
 
-## Phase 1 Scope
+## Current Scope
 
 - Text to GoogleSQL
 - SQL Explain
 - SQL Optimize
 - GoogleSQL tutorials
 - Cheat sheets
+- Admin release console
+- Google and GitHub one-click login
+- Dry-run execution gate
+- Workspace allowlist preview
 - Health endpoint for deployment checks
 - CI pipeline for lint, typecheck, unit tests, and build
 
@@ -20,6 +24,8 @@ npm install
 npm run dev
 npm run ci
 ```
+
+OAuth setup is documented in `docs/AUTH_SETUP.md`.
 
 ## Deployment Principle
 
@@ -32,4 +38,3 @@ The project follows this release system:
 
 GoogleSQL.com is independent and is not affiliated with, endorsed by, or
 sponsored by Google.
-

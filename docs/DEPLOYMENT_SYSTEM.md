@@ -19,12 +19,18 @@ Required checks before merge:
 - `npm run build`
 - Health endpoint smoke check after deployment
 
-Future Phase 2 checks:
+Phase 2 checks:
 
 - SQL validator regression tests
-- Prompt regression tests
 - BigQuery dry-run cost checks
-- API contract tests
+- Admin console release-state tests
+- OAuth session helper tests
+- Health metadata contract tests
+
+Future checks:
+
+- Prompt regression tests
+- API contract tests for Cloudflare/BigQuery adapters
 
 ## Release Gradually
 
@@ -41,6 +47,7 @@ Canary controls:
 - User allowlist
 - Percentage rollout
 - Feature flag by tool
+- Dry-run approval gate
 
 ## Roll Back Quickly
 
@@ -49,4 +56,3 @@ Canary controls:
 - Prefer backward-compatible database migrations.
 - Roll back traffic to the last healthy deployment before debugging.
 - Roll back prompts and agent configs independently from app code.
-

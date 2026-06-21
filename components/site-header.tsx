@@ -1,16 +1,25 @@
 import Link from "next/link";
 import { Bell, Database, DatabaseZap } from "lucide-react";
+import { AccountMenu } from "@/components/account-menu";
 import { cn } from "@/lib/utils";
 
-const navItems = [
-  { href: "/tools", label: "AI", compact: true },
-  { href: "/", label: "Query", active: true },
-  { href: "/tutorials", label: "History" },
-  { href: "/cheat-sheets", label: "Saved" },
-  { href: "/pricing", label: "Settings" }
-];
+type NavKey = "ai" | "query" | "history" | "saved" | "settings" | "admin";
 
-export function SiteHeader() {
+const navItems = [
+  { href: "/tools", label: "AI", key: "ai", compact: true },
+  { href: "/", label: "Query", key: "query" },
+  { href: "/tutorials", label: "History", key: "history" },
+  { href: "/cheat-sheets", label: "Saved", key: "saved" },
+  { href: "/pricing", label: "Settings", key: "settings" },
+  { href: "/admin", label: "Admin", key: "admin" }
+] satisfies Array<{
+  href: string;
+  label: string;
+  key: NavKey;
+  compact?: boolean;
+}>;
+
+export function SiteHeader({ active = "query" }: { active?: NavKey }) {
   return (
     <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070a12]/[0.86] backdrop-blur-xl">
       <div className="mx-auto flex h-14 max-w-[1480px] items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -32,7 +41,7 @@ export function SiteHeader() {
                 className={cn(
                   "rounded-md px-3 py-1.5 text-sm font-medium transition",
                   item.compact ? "px-2 text-xs" : "",
-                  item.active
+                  active === item.key
                     ? "bg-[#4285f4]/[0.15] text-[#60a5fa] shadow-[0_0_18px_rgba(66,133,244,0.12)]"
                     : item.compact
                       ? "bg-[#4285f4]/10 text-[#60a5fa]"
@@ -63,13 +72,7 @@ export function SiteHeader() {
           >
             <Bell className="h-4 w-4" />
           </button>
-          <button
-            type="button"
-            aria-label="User menu"
-            className="focus-ring flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#4285f4] to-[#a855f7] text-sm font-semibold text-white shadow-[0_0_22px_rgba(168,85,247,0.28)]"
-          >
-            u
-          </button>
+          <AccountMenu />
         </div>
       </div>
     </header>
