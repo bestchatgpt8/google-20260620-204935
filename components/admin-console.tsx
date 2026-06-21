@@ -67,6 +67,7 @@ export function AdminConsole() {
   );
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingFlagId, setPendingFlagId] = useState<string | null>(null);
+  const [pendingReviewId, setPendingReviewId] = useState<string | null>(null);
 
   const refreshAdminState = useCallback(async () => {
     try {
@@ -118,6 +119,16 @@ export function AdminConsole() {
   useEffect(() => {
     void refreshAdminState();
   }, [refreshAdminState]);
+
+  useEffect(() => {
+    if (
+      loadState.status === "locked" &&
+      loadState.code !== "admin_required" &&
+      loadState.loginUrl
+    ) {
+      window.location.replace(loadState.loginUrl);
+    }
+  }, [loadState]);
 
   const readyState = loadState.status === "ready" ? loadState : null;
   const state = readyState?.state;
@@ -230,6 +241,47 @@ export function AdminConsole() {
     }
   }
 
+  async function updateReviewStatus(id: string, status: QueryRunStatus) {
+    setPendingReviewId(id);
+    setNotice(null);
+
+    try {
+      const response = await fetch(`/api/admin/run-reviews/${id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status })
+      });
+      const data = (await response.json().catch(() => null)) as unknown;
+
+      if (!response.ok) {
+        throw new Error(
+          isApiError(data) ? data.message : "Run review update failed."
+        );
+      }
+
+      if (!isRunReviewResponse(data)) {
+        throw new Error("Run review update returned an unexpected response.");
+      }
+
+      replaceRunReview(data.review);
+      setNotice(
+        status === "approved"
+          ? "Run review approved and recorded in the audit log."
+          : "Run review blocked and recorded in the audit log."
+      );
+      void refreshAdminState();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Run review update failed."
+      );
+    } finally {
+      setPendingReviewId(null);
+    }
+  }
+
   function replaceFeatureFlag(featureFlag: Phase2FeatureFlag) {
     setLoadState((current) => {
       if (current.status !== "ready") {
@@ -242,6 +294,24 @@ export function AdminConsole() {
           ...current.state,
           featureFlags: current.state.featureFlags.map((flag) =>
             flag.id === featureFlag.id ? featureFlag : flag
+          )
+        }
+      };
+    });
+  }
+
+  function replaceRunReview(review: AdminState["reviewQueue"][number]) {
+    setLoadState((current) => {
+      if (current.status !== "ready") {
+        return current;
+      }
+
+      return {
+        ...current,
+        state: {
+          ...current.state,
+          reviewQueue: current.state.reviewQueue.map((item) =>
+            item.id === review.id ? review : item
           )
         }
       };
@@ -566,6 +636,32 @@ export function AdminConsole() {
                     />
                     <TinyMetric label="Age" value={item.submittedAt} />
                   </div>
+                  {item.status === "needs_approval" ? (
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={pendingReviewId === item.id}
+                        onClick={() =>
+                          void updateReviewStatus(item.id, "approved")
+                        }
+                        className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#34a853]/25 bg-[#34a853]/10 px-3 text-xs font-semibold text-[#4ade80] transition hover:bg-[#34a853]/15 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={pendingReviewId === item.id}
+                        onClick={() =>
+                          void updateReviewStatus(item.id, "blocked")
+                        }
+                        className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#ea4335]/25 bg-[#ea4335]/10 px-3 text-xs font-semibold text-[#f87171] transition hover:bg-[#ea4335]/15 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Block
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -868,6 +964,13 @@ function isFeatureFlagResponse(value: unknown): value is {
   featureFlag: Phase2FeatureFlag;
 } {
   return isRecord(value) && value.ok === true && isRecord(value.featureFlag);
+}
+
+function isRunReviewResponse(value: unknown): value is {
+  ok: true;
+  review: AdminState["reviewQueue"][number];
+} {
+  return isRecord(value) && value.ok === true && isRecord(value.review);
 }
 
 function isAdminUser(value: unknown): value is AdminUser {

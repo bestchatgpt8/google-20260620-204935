@@ -49,6 +49,7 @@ describe("phase 2 release controls", () => {
     expect(health.checks).toContain("d1-admin-store");
     expect(health.checks).toContain("bigquery-dry-run");
     expect(health.checks).toContain("query-run-audit");
+    expect(health.checks).toContain("run-review-approval");
   });
 
   it("ships canary and rollback controls as configured data", () => {

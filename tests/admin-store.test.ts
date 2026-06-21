@@ -4,6 +4,7 @@ import {
   getAdminDb,
   queueRollback,
   recordQueryDryRun,
+  updateRunReviewStatus,
   updateFeatureRollout
 } from "../lib/admin-store";
 import { estimateDryRun } from "../lib/phase2";
@@ -66,5 +67,19 @@ describe("phase 3 admin store", () => {
     expect(result.id).toMatch(/^run-/);
     expect(result.persisted).toBe(false);
     expect(result.storageBinding).toBeNull();
+  });
+
+  it("rejects run review approvals without D1 persistence", async () => {
+    const result = await updateRunReviewStatus(
+      {},
+      "run-1026",
+      "approved",
+      "owner@example.com"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "storage_not_configured"
+    });
   });
 });
