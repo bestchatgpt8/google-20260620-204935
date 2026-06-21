@@ -302,7 +302,12 @@ export function getPhase3Health() {
 }
 
 function extractReferencedTables(sql: string) {
-  return Array.from(sql.matchAll(/`([\w.-]+)`/g), (match) => match[1]);
+  const tables = Array.from(
+    sql.matchAll(/\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/gi),
+    (match) => match[1]
+  );
+
+  return Array.from(new Set(tables));
 }
 
 function countProjectedColumns(sql: string) {

@@ -23,6 +23,7 @@ const ignoredIdentifiers = new Set([
   "DATE",
   "DATE_SUB",
   "DATE_TRUNC",
+  "DAY",
   "DESC",
   "DISTINCT",
   "FROM",
@@ -37,6 +38,7 @@ const ignoredIdentifiers = new Set([
   "SUM",
   "COUNT",
   "TIMESTAMP_SUB",
+  "YEAR",
   "WEEK",
   "WHERE"
 ]);
