@@ -2,7 +2,7 @@
   "name": "googlesql",
   "version": "0.1.0",
   "private": true,
-  "description": "GoogleSQL.com Phase 1 - GoogleSQL Copilot for BigQuery users.",
+  "description": "GoogleSQL.com Phase 2 - GoogleSQL Copilot with admin release controls.",
   "scripts": {
     "dev": "node node_modules/next/dist/bin/next dev",
     "build": "node node_modules/next/dist/bin/next build",

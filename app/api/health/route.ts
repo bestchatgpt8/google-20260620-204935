@@ -1,9 +1,7 @@
+import { getPhase2Health } from "@/lib/phase2";
+
 export const dynamic = "force-static";
 
 export function GET() {
-  return Response.json({
-    ok: true,
-    service: "googlesql-web",
-    phase: "phase-1"
-  });
+  return Response.json(getPhase2Health());
 }

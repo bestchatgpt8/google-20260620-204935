@@ -32,7 +32,7 @@ export const metadata: Metadata = {
 export default function PricingPage() {
   return (
     <main className="min-h-screen bg-[#070a12] text-slate-100">
-      <SiteHeader />
+      <SiteHeader active="settings" />
       <section className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
         <div className="max-w-3xl">
           <h1 className="text-4xl font-semibold tracking-normal text-slate-50">

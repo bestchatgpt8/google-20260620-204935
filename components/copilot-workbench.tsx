@@ -28,6 +28,12 @@ import {
 } from "lucide-react";
 import { generateGoogleSql, validateGoogleSql } from "@/lib/copilot-engine";
 import { schemaTables } from "@/lib/content";
+import {
+  estimateDryRun,
+  formatBytes,
+  formatCost,
+  type QueryRunPreview
+} from "@/lib/phase2";
 import { cn } from "@/lib/utils";
 
 type SqlTokenType =
@@ -94,9 +100,12 @@ export function CopilotWorkbench({ compact = false }: { compact?: boolean }) {
   const [question, setQuestion] = useState(sampleQuestion);
   const [result, setResult] = useState(generateGoogleSql(sampleQuestion));
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isDryRunning, setIsDryRunning] = useState(false);
+  const [runPreview, setRunPreview] = useState<QueryRunPreview | null>(null);
   const [showHint, setShowHint] = useState(true);
 
   const outputSql = result.sql || sampleSql;
+  const defaultRunEstimate = useMemo(() => estimateDryRun(outputSql), [outputSql]);
   const safetyChecks = useMemo(() => validateGoogleSql(outputSql), [outputSql]);
   const usedFields = useMemo(() => extractUsedFields(outputSql), [outputSql]);
   const allChecksPassed = safetyChecks.every((check) => check.status === "pass");
@@ -105,9 +114,26 @@ export function CopilotWorkbench({ compact = false }: { compact?: boolean }) {
     setIsGenerating(true);
     window.setTimeout(() => {
       setResult(generateGoogleSql(question));
+      setRunPreview(null);
       setIsGenerating(false);
       notify("Generated optimized GoogleSQL");
     }, 720);
+  }
+
+  function dryRunQuery() {
+    setIsDryRunning(true);
+    window.setTimeout(() => {
+      const preview = estimateDryRun(outputSql);
+      setRunPreview(preview);
+      setIsDryRunning(false);
+      notify(
+        preview.status === "blocked"
+          ? "Run blocked by safety policy"
+          : preview.status === "needs_approval"
+            ? "Run queued for admin approval"
+            : "Dry run approved for canary"
+      );
+    }, 620);
   }
 
   function copySql() {
@@ -246,11 +272,16 @@ export function CopilotWorkbench({ compact = false }: { compact?: boolean }) {
                   <button
                     type="button"
                     title="Run query"
-                    onClick={() => notify("Run is staged for Phase 2")}
+                    onClick={dryRunQuery}
+                    disabled={isDryRunning}
                     className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-slate-500 transition hover:bg-white/[0.06] hover:text-slate-200"
                   >
-                    <Play className="h-3.5 w-3.5" />
-                    Run
+                    {isDryRunning ? (
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                    {isDryRunning ? "Dry run" : "Run"}
                   </button>
                   <button
                     type="button"
@@ -274,12 +305,33 @@ export function CopilotWorkbench({ compact = false }: { compact?: boolean }) {
               </div>
 
               <SqlEditor sql={outputSql} />
+              <RunGatePreview preview={runPreview} />
 
               <div className="flex flex-col gap-3 border-t border-white/10 px-5 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-                  <InlineMetric icon={Gauge} label="Est. cost" value="~$0.02" />
-                  <InlineMetric icon={Database} label="" value="~240 MB scanned" />
-                  <InlineMetric icon={Clock3} label="" value="~2.1s" />
+                  <InlineMetric
+                    icon={Gauge}
+                    label="Est. cost"
+                    value={formatCost(
+                      runPreview?.estimatedCostUsd ??
+                        defaultRunEstimate.estimatedCostUsd
+                    )}
+                  />
+                  <InlineMetric
+                    icon={Database}
+                    label=""
+                    value={`${formatBytes(
+                      runPreview?.scannedBytes ?? defaultRunEstimate.scannedBytes
+                    )} scanned`}
+                  />
+                  <InlineMetric
+                    icon={Clock3}
+                    label=""
+                    value={`${(
+                      (runPreview?.expectedRuntimeMs ??
+                        defaultRunEstimate.expectedRuntimeMs) / 1000
+                    ).toFixed(1)}s`}
+                  />
                 </div>
                 <span>BigQuery Standard SQL</span>
               </div>
@@ -339,6 +391,74 @@ export function CopilotWorkbench({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function RunGatePreview({ preview }: { preview: QueryRunPreview | null }) {
+  if (!preview) {
+    return null;
+  }
+
+  const statusClassName = {
+    approved: "border-[#34a853]/25 bg-[#34a853]/[0.08] text-[#4ade80]",
+    needs_approval: "border-[#fbbc05]/25 bg-[#fbbc05]/[0.08] text-[#facc15]",
+    blocked: "border-[#ea4335]/25 bg-[#ea4335]/[0.08] text-[#f87171]"
+  }[preview.status];
+
+  return (
+    <div className="border-t border-white/10 bg-[#070b13] px-5 py-4">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="flex min-w-0 items-start gap-3">
+          <span
+            className={cn(
+              "pulse-ring mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border",
+              statusClassName
+            )}
+          >
+            <ShieldCheck className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold text-slate-100">
+                Execution Gate
+              </p>
+              <span
+                className={cn(
+                  "rounded-md border px-2 py-1 text-xs font-semibold",
+                  statusClassName
+                )}
+              >
+                {preview.gateLabel}
+              </span>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              {preview.referencedTables.join(", ") || "No table detected"} ·{" "}
+              {preview.projectedColumns || "unknown"} projected columns
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-xs sm:min-w-[360px]">
+          <RunMetric label="Cost" value={formatCost(preview.estimatedCostUsd)} />
+          <RunMetric label="Scan" value={formatBytes(preview.scannedBytes)} />
+          <RunMetric
+            label="Runtime"
+            value={`${(preview.expectedRuntimeMs / 1000).toFixed(1)}s`}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RunMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded-lg border border-white/[0.08] bg-white/[0.035] px-3 py-2">
+      <span className="block text-[11px] font-medium text-slate-600">
+        {label}
+      </span>
+      <span className="mt-1 block font-semibold text-slate-200">{value}</span>
+    </span>
   );
 }
 

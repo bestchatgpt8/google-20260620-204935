@@ -7,8 +7,9 @@ export function SiteFooter() {
           endorsed by, or sponsored by Google.
         </p>
         <p>
-          Phase 1 focuses on free GoogleSQL learning and Copilot tools. Database
-          execution, billing, and enterprise controls are planned for later phases.
+          Phase 2 adds admin release controls and dry-run gates. Live database
+          execution, billing, and authenticated enterprise controls remain staged
+          for later phases.
         </p>
       </div>
     </footer>
