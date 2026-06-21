@@ -43,6 +43,18 @@ export type QueryRunPreview = {
   referencedTables: string[];
   projectedColumns: number;
   checks: SafetyCheck[];
+  mode?: "live" | "simulated";
+  configured?: boolean;
+  runId?: string;
+  persisted?: boolean;
+  jobReference?: {
+    projectId?: string;
+    location?: string;
+  };
+  error?: {
+    code: string;
+    message: string;
+  };
 };
 
 export type ReviewQueueItem = {
@@ -282,7 +294,9 @@ export function getPhase3Health() {
       ...phase2.checks,
       "admin-rbac",
       "d1-admin-store",
-      "audit-log"
+      "audit-log",
+      "bigquery-dry-run",
+      "query-run-audit"
     ]
   };
 }
@@ -324,7 +338,7 @@ function estimateScanMegabytes({
   return base + tableCost + columnCost;
 }
 
-function getGateLabel(status: QueryRunStatus) {
+export function getGateLabel(status: QueryRunStatus) {
   return {
     approved: "Dry run approved",
     needs_approval: "Admin approval required",

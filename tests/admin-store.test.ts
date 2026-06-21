@@ -3,8 +3,10 @@ import {
   getAdminState,
   getAdminDb,
   queueRollback,
+  recordQueryDryRun,
   updateFeatureRollout
 } from "../lib/admin-store";
+import { estimateDryRun } from "../lib/phase2";
 
 describe("phase 3 admin store", () => {
   it("returns seed preview state when D1 is not bound", async () => {
@@ -48,5 +50,21 @@ describe("phase 3 admin store", () => {
       ok: false,
       code: "storage_not_configured"
     });
+  });
+
+  it("returns an unpersisted query run id when D1 is not bound", async () => {
+    const result = await recordQueryDryRun(
+      {},
+      {
+        workspace: "analytics",
+        queryType: "Revenue rollup",
+        sql: "SELECT order_id FROM `analytics.orders`;",
+        preview: estimateDryRun("SELECT order_id FROM `analytics.orders`;")
+      }
+    );
+
+    expect(result.id).toMatch(/^run-/);
+    expect(result.persisted).toBe(false);
+    expect(result.storageBinding).toBeNull();
   });
 });

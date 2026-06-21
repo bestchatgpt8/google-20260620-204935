@@ -8,6 +8,7 @@ import {
   workspaceAllowlist,
   type FeatureFlagStatus,
   type Phase2FeatureFlag,
+  type QueryRunPreview,
   type ReleaseEnvironment,
   type ReviewQueueItem,
   type WorkspaceAccess
@@ -46,6 +47,12 @@ export type AdminState = {
 };
 
 export type UserUpsertResult = {
+  persisted: boolean;
+  storageBinding: "GOOGLESQL_DB" | "DB" | null;
+};
+
+export type QueryRunRecordResult = {
+  id: string;
   persisted: boolean;
   storageBinding: "GOOGLESQL_DB" | "DB" | null;
 };
@@ -324,6 +331,113 @@ export async function queueRollback(
   };
 }
 
+export async function recordQueryDryRun(
+  env: AdminStorageEnv,
+  input: {
+    workspace: string;
+    queryType: string;
+    actorEmail?: string;
+    sql: string;
+    preview: QueryRunPreview;
+  }
+): Promise<QueryRunRecordResult> {
+  const id = createRunId();
+  const configured = getAdminDb(env);
+  if (!configured) {
+    return {
+      id,
+      persisted: false,
+      storageBinding: null
+    };
+  }
+
+  await ensureAdminSchema(configured.db);
+  const now = new Date().toISOString();
+  const actorEmail = input.actorEmail?.toLowerCase() ?? null;
+  const workspace = normalizeWorkspace(input.workspace);
+  const queryType = input.queryType.trim() || "GoogleSQL dry run";
+
+  await configured.db
+    .prepare(
+      `INSERT INTO query_runs (
+        id,
+        workspace,
+        actor_email,
+        sql,
+        status,
+        mode,
+        estimated_cost_usd,
+        scanned_bytes,
+        expected_runtime_ms,
+        referenced_tables_json,
+        checks_json,
+        error_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      id,
+      workspace,
+      actorEmail,
+      input.sql,
+      input.preview.status,
+      input.preview.mode ?? "simulated",
+      input.preview.estimatedCostUsd,
+      input.preview.scannedBytes,
+      input.preview.expectedRuntimeMs,
+      JSON.stringify(input.preview.referencedTables),
+      JSON.stringify(input.preview.checks),
+      input.preview.error ? JSON.stringify(input.preview.error) : null,
+      now,
+      now
+    )
+    .run();
+
+  await configured.db
+    .prepare(
+      `INSERT OR REPLACE INTO run_reviews (
+        id,
+        workspace,
+        query_type,
+        status,
+        estimated_cost_usd,
+        scanned_bytes,
+        submitted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      id,
+      workspace,
+      queryType,
+      input.preview.status,
+      input.preview.estimatedCostUsd,
+      input.preview.scannedBytes,
+      now
+    )
+    .run();
+
+  await recordAuditEvent(env, {
+    actorEmail: actorEmail ?? "anonymous@googlesql.com",
+    action: "query.dry_run",
+    target: id,
+    metadata: {
+      workspace,
+      queryType,
+      status: input.preview.status,
+      mode: input.preview.mode ?? "simulated",
+      scannedBytes: input.preview.scannedBytes,
+      estimatedCostUsd: input.preview.estimatedCostUsd
+    }
+  });
+
+  return {
+    id,
+    persisted: true,
+    storageBinding: configured.binding
+  };
+}
+
 export async function recordAuditEvent(
   env: AdminStorageEnv,
   event: {
@@ -427,6 +541,27 @@ export async function ensureAdminSchema(db: D1Database) {
         estimated_cost_usd REAL NOT NULL,
         scanned_bytes INTEGER NOT NULL,
         submitted_at TEXT NOT NULL
+      )`
+    )
+    .run();
+
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS query_runs (
+        id TEXT PRIMARY KEY,
+        workspace TEXT NOT NULL,
+        actor_email TEXT,
+        sql TEXT NOT NULL,
+        status TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        estimated_cost_usd REAL NOT NULL,
+        scanned_bytes INTEGER NOT NULL,
+        expected_runtime_ms INTEGER NOT NULL,
+        referenced_tables_json TEXT NOT NULL,
+        checks_json TEXT NOT NULL,
+        error_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       )`
     )
     .run();
@@ -665,6 +800,20 @@ function storageNotConfigured(): StoreMutationResult<never> {
 
 function createUserId(provider: AuthProvider, providerId: string) {
   return `${provider}:${providerId}`;
+}
+
+function createRunId() {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/\D/g, "")
+    .slice(0, 14);
+
+  return `run-${timestamp}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function normalizeWorkspace(value: string) {
+  const trimmed = value.trim().toLowerCase();
+  return trimmed || "analytics";
 }
 
 function parseMetadata(value: string) {

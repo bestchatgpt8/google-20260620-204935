@@ -45,6 +45,13 @@ type SqlTokenType =
   | "comment"
   | "plain";
 
+type QueryDryRunApiResponse = {
+  ok?: boolean;
+  preview?: QueryRunPreview;
+  code?: string;
+  message?: string;
+};
+
 const sampleQuestion =
   "Show weekly revenue and order count for the last 8 weeks, grouped by acquisition channel";
 
@@ -120,20 +127,47 @@ export function CopilotWorkbench({ compact = false }: { compact?: boolean }) {
     }, 720);
   }
 
-  function dryRunQuery() {
+  async function dryRunQuery() {
     setIsDryRunning(true);
-    window.setTimeout(() => {
-      const preview = estimateDryRun(outputSql);
+    try {
+      const response = await fetch("/api/query/dry-run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          sql: outputSql,
+          workspace: "analytics",
+          queryType: "Generated Query"
+        })
+      });
+      const body = (await response.json()) as QueryDryRunApiResponse;
+
+      if (!response.ok || !body.preview) {
+        throw new Error(body.message ?? "Dry-run API request failed.");
+      }
+
+      setRunPreview(body.preview);
+      notify(getDryRunToast(body.preview));
+    } catch (error) {
+      const preview = {
+        ...estimateDryRun(outputSql),
+        mode: "simulated",
+        configured: false,
+        error: {
+          code: "frontend_fallback",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Backend dry-run API is unavailable."
+        }
+      } satisfies QueryRunPreview;
+
       setRunPreview(preview);
+      notify("Local simulated dry run; backend unavailable");
+    } finally {
       setIsDryRunning(false);
-      notify(
-        preview.status === "blocked"
-          ? "Run blocked by safety policy"
-          : preview.status === "needs_approval"
-            ? "Run queued for admin approval"
-            : "Dry run approved for canary"
-      );
-    }, 620);
+    }
   }
 
   function copySql() {
@@ -399,6 +433,11 @@ function RunGatePreview({ preview }: { preview: QueryRunPreview | null }) {
     return null;
   }
 
+  const modeLabel =
+    preview.mode === "live" ? "BigQuery live dry run" : "Simulated dry run";
+  const persistenceLabel = preview.persisted
+    ? `Audit saved as ${preview.runId}`
+    : "Audit not persisted";
   const statusClassName = {
     approved: "border-[#34a853]/25 bg-[#34a853]/[0.08] text-[#4ade80]",
     needs_approval: "border-[#fbbc05]/25 bg-[#fbbc05]/[0.08] text-[#facc15]",
@@ -432,8 +471,12 @@ function RunGatePreview({ preview }: { preview: QueryRunPreview | null }) {
               </span>
             </div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
+              {modeLabel} · {persistenceLabel}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
               {preview.referencedTables.join(", ") || "No table detected"} ·{" "}
               {preview.projectedColumns || "unknown"} projected columns
+              {preview.error ? ` · ${preview.error.message}` : ""}
             </p>
           </div>
         </div>
@@ -703,4 +746,22 @@ function fallbackCopy(text: string) {
   textarea.select();
   document.execCommand("copy");
   document.body.removeChild(textarea);
+}
+
+function getDryRunToast(preview: QueryRunPreview) {
+  if (preview.status === "blocked") {
+    return "Run blocked by safety policy";
+  }
+
+  if (preview.status === "needs_approval") {
+    return preview.persisted
+      ? "Run queued for admin approval"
+      : "Run needs admin approval";
+  }
+
+  if (preview.mode === "live") {
+    return "Live BigQuery dry run approved";
+  }
+
+  return "Simulated dry run; BigQuery credentials not configured";
 }
