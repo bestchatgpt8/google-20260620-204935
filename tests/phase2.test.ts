@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   estimateDryRun,
   getPhase2Health,
+  getPhase3Health,
   phase2FeatureFlags,
   releaseTracks
 } from "../lib/phase2";
@@ -38,6 +39,14 @@ describe("phase 2 release controls", () => {
     expect(health.phase).toBe("phase-2");
     expect(health.deployment.model).toContain("gray-release");
     expect(health.checks).toContain("admin-console");
+  });
+
+  it("adds phase 3 admin persistence checks to health data", () => {
+    const health = getPhase3Health();
+
+    expect(health.phase).toBe("phase-3");
+    expect(health.checks).toContain("admin-rbac");
+    expect(health.checks).toContain("d1-admin-store");
   });
 
   it("ships canary and rollback controls as configured data", () => {

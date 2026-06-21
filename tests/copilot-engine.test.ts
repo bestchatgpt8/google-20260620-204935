@@ -23,6 +23,34 @@ describe("copilot engine", () => {
     });
   });
 
+  it("warns when selected columns are not in the known schema", () => {
+    const checks = validateGoogleSql(
+      "SELECT order_id, made_up_metric FROM `analytics.orders` WHERE order_date >= CURRENT_DATE();"
+    );
+    const schemaCheck = checks.find(
+      (check) => check.label === "Schema-validated columns"
+    );
+
+    expect(schemaCheck).toMatchObject({
+      status: "warn"
+    });
+    expect(schemaCheck?.detail).toContain("made_up_metric");
+  });
+
+  it("warns when SQL selects likely PII fields", () => {
+    const checks = validateGoogleSql(
+      "SELECT email, phone_number FROM `analytics.customers` WHERE created_at >= CURRENT_TIMESTAMP();"
+    );
+    const piiCheck = checks.find(
+      (check) => check.label === "No PII exposure risk"
+    );
+
+    expect(piiCheck).toMatchObject({
+      status: "warn"
+    });
+    expect(piiCheck?.detail).toContain("email");
+  });
+
   it("adds a cost guard when optimizing an unbounded query", () => {
     const result = optimizeGoogleSql("SELECT * FROM `analytics.orders`;");
 

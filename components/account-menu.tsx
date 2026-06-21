@@ -14,6 +14,7 @@ type SessionState =
         email: string;
         name: string;
         avatarUrl?: string;
+        role: "admin" | "member";
       };
     };
 
@@ -26,7 +27,7 @@ export function AccountMenu() {
     return (
       <div className="flex items-center gap-2">
         <Link
-          href="/admin"
+          href={session.user.role === "admin" ? "/admin" : "/"}
           title={session.user.email}
           className="focus-ring hidden items-center gap-2 rounded-lg border border-white/10 bg-white/[0.035] px-2 py-1 text-xs text-slate-300 transition hover:bg-white/[0.06] sm:flex"
         >
@@ -111,6 +112,7 @@ function isSessionResponse(value: unknown): value is {
     email: string;
     name: string;
     avatarUrl?: string;
+    role: "admin" | "member";
   };
 } {
   if (typeof value !== "object" || value === null) {
@@ -132,6 +134,7 @@ function isSessionResponse(value: unknown): value is {
     (userRecord.provider === "google" || userRecord.provider === "github") &&
     typeof userRecord.email === "string" &&
     typeof userRecord.name === "string" &&
+    (userRecord.role === "admin" || userRecord.role === "member") &&
     (typeof userRecord.avatarUrl === "string" ||
       typeof userRecord.avatarUrl === "undefined")
   );

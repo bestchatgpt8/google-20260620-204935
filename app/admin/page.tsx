@@ -6,7 +6,7 @@ import { SiteHeader } from "@/components/site-header";
 export const metadata: Metadata = {
   title: "Admin",
   description:
-    "GoogleSQL Phase 2 admin console for release gates, dry-runs, and rollback readiness.",
+    "GoogleSQL Phase 3 admin console for RBAC, D1-backed release gates, dry-runs, and rollback readiness.",
   robots: {
     index: false,
     follow: false

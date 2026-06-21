@@ -1,11 +1,8 @@
 import {
-  SESSION_COOKIE,
   getPublicSession,
-  readCookie,
-  verifyAuthPayload,
-  type AuthEnv,
-  type AuthSession
+  type AuthEnv
 } from "../../../lib/auth";
+import { getSessionFromRequest } from "../../../lib/auth-request";
 
 type SessionContext = {
   request: Request;
@@ -26,11 +23,7 @@ export async function onRequestGet(context: SessionContext) {
     );
   }
 
-  const token = readCookie(
-    context.request.headers.get("Cookie"),
-    SESSION_COOKIE
-  );
-  const session = await verifyAuthPayload<AuthSession>(token, secret);
+  const session = await getSessionFromRequest(context.request, context.env);
 
   return new Response(
     JSON.stringify({

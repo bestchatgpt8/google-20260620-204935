@@ -1,4 +1,5 @@
 export type AuthProvider = "google" | "github";
+export type AuthRole = "admin" | "member";
 
 export type AuthEnv = {
   AUTH_COOKIE_SECRET?: string;
@@ -6,6 +7,7 @@ export type AuthEnv = {
   GOOGLE_CLIENT_SECRET?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
+  ADMIN_EMAILS?: string;
 };
 
 export type AuthSession = {
@@ -14,6 +16,7 @@ export type AuthSession = {
   email: string;
   name: string;
   avatarUrl?: string;
+  role?: AuthRole;
   expiresAt: number;
 };
 
@@ -65,8 +68,38 @@ export function getPublicSession(session: AuthSession) {
     provider: session.provider,
     email: session.email,
     name: session.name,
-    avatarUrl: session.avatarUrl
+    avatarUrl: session.avatarUrl,
+    role: getSessionRole(session)
   };
+}
+
+export function getSessionRole(session: Pick<AuthSession, "role">): AuthRole {
+  return session.role === "admin" ? "admin" : "member";
+}
+
+export function getAuthRoleForEmail(email: string, env: AuthEnv): AuthRole {
+  return isAdminEmail(email, env) ? "admin" : "member";
+}
+
+export function isAdminEmail(email: string, env: AuthEnv) {
+  const normalizedEmail = normalizeEmail(email);
+
+  return parseAdminEmails(env.ADMIN_EMAILS).includes(normalizedEmail);
+}
+
+export function parseAdminEmails(value: string | undefined) {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(",")
+    .map(normalizeEmail)
+    .filter(Boolean);
+}
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
 }
 
 export async function signAuthPayload(
