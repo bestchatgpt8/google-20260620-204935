@@ -25,7 +25,7 @@ describe("phase 2 release controls", () => {
 
   it("approves bounded read queries for canary dry-run", () => {
     const preview = estimateDryRun(
-      "SELECT order_id FROM `analytics.orders` WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY);"
+      "SELECT order_id FROM analytics.orders WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY);"
     );
 
     expect(preview.status).toBe("approved");

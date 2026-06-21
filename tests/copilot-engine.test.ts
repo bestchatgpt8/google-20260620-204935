@@ -37,6 +37,19 @@ describe("copilot engine", () => {
     expect(schemaCheck?.detail).toContain("made_up_metric");
   });
 
+  it("does not treat interval units as schema columns", () => {
+    const checks = validateGoogleSql(
+      "SELECT order_id FROM `analytics.orders` WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY);"
+    );
+    const schemaCheck = checks.find(
+      (check) => check.label === "Schema-validated columns"
+    );
+
+    expect(schemaCheck).toMatchObject({
+      status: "pass"
+    });
+  });
+
   it("warns when SQL selects likely PII fields", () => {
     const checks = validateGoogleSql(
       "SELECT email, phone_number FROM `analytics.customers` WHERE created_at >= CURRENT_TIMESTAMP();"
