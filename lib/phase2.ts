@@ -296,7 +296,8 @@ export function getPhase3Health() {
       "d1-admin-store",
       "audit-log",
       "bigquery-dry-run",
-      "query-run-audit"
+      "query-run-audit",
+      "run-review-approval"
     ]
   };
 }

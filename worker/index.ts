@@ -20,6 +20,7 @@ import {
 import { onRequestGet as onAuthSessionGet } from "../functions/api/auth/session";
 import { onRequestGet as onAdminStateGet } from "../functions/api/admin/state";
 import { onRequestPatch as onAdminFeatureFlagPatch } from "../functions/api/admin/feature-flags/[id]";
+import { onRequestPatch as onAdminRunReviewPatch } from "../functions/api/admin/run-reviews/[id]";
 import { onRequestPost as onAdminRollbackPost } from "../functions/api/admin/rollback";
 import { onRequestPost as onQueryDryRunPost } from "../functions/api/query/dry-run";
 
@@ -176,6 +177,23 @@ function matchApiRoute(
           env,
           params: {
             id: featureFlag[1]
+          }
+        })
+    };
+  }
+
+  const runReview = url.pathname.match(
+    /^\/api\/admin\/run-reviews\/([^/]+)$/
+  );
+  if (runReview) {
+    return {
+      allowedMethods: ["PATCH"],
+      handler: () =>
+        onAdminRunReviewPatch({
+          request,
+          env,
+          params: {
+            id: runReview[1]
           }
         })
     };

@@ -38,6 +38,17 @@ logging, and API-backed rollout controls.
 - The frontend `Run` button now calls the backend API and displays whether the
   result came from a live BigQuery dry-run or simulated fallback.
 
+## Phase 3C Scope
+
+- `/api/admin/run-reviews/:id` lets admins approve or block queued dry-runs.
+- Approval updates both `run_reviews` and the matching `query_runs` audit row
+  when D1 is bound.
+- Approval and block actions write explicit audit events.
+- The admin console exposes Approve and Block controls for
+  `needs_approval` runs.
+- Unauthenticated admin page loads now redirect to `/login` from the client
+  even when a static shell is served from cache.
+
 ## Deployment Setup
 
 Create the database and apply the schema:
@@ -81,6 +92,5 @@ read metadata/data for the datasets that GoogleSQL.com should validate.
 
 ## Next Phase
 
-Phase 3C should add workspace-scoped schema management, explicit admin approval
-actions for queued query runs, and a separate guarded path for real query
-execution after dry-run approval.
+The next phase should add workspace-scoped schema management and a separate
+guarded path for real query execution after dry-run approval.

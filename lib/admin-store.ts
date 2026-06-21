@@ -9,6 +9,7 @@ import {
   type FeatureFlagStatus,
   type Phase2FeatureFlag,
   type QueryRunPreview,
+  type QueryRunStatus,
   type ReleaseEnvironment,
   type ReviewQueueItem,
   type WorkspaceAccess
@@ -328,6 +329,79 @@ export async function queueRollback(
       queuedAt,
       target: "prod-20260620"
     }
+  };
+}
+
+export async function updateRunReviewStatus(
+  env: AdminStorageEnv,
+  id: string,
+  status: QueryRunStatus,
+  actorEmail: string
+): Promise<StoreMutationResult<ReviewQueueItem>> {
+  if (status !== "approved" && status !== "blocked") {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_run_status",
+      message: "Run reviews can only be approved or blocked."
+    };
+  }
+
+  const configured = getAdminDb(env);
+  if (!configured) {
+    return storageNotConfigured();
+  }
+
+  await ensureAdminSchema(configured.db);
+  const existing = await getRunReview(configured.db, id);
+  if (!existing) {
+    return {
+      ok: false,
+      status: 404,
+      code: "run_review_not_found",
+      message: "Run review not found."
+    };
+  }
+
+  const updated = {
+    ...existing,
+    status,
+    submittedAt: new Date().toISOString()
+  } satisfies ReviewQueueItem;
+
+  await configured.db
+    .prepare(
+      `UPDATE run_reviews
+      SET status = ?, submitted_at = ?
+      WHERE id = ?`
+    )
+    .bind(updated.status, updated.submittedAt, updated.id)
+    .run();
+
+  await configured.db
+    .prepare(
+      `UPDATE query_runs
+      SET status = ?, updated_at = ?
+      WHERE id = ?`
+    )
+    .bind(updated.status, updated.submittedAt, updated.id)
+    .run();
+
+  await recordAuditEvent(env, {
+    actorEmail,
+    action:
+      status === "approved" ? "query.approved" : "query.blocked",
+    target: id,
+    metadata: {
+      workspace: updated.workspace,
+      queryType: updated.queryType,
+      status
+    }
+  });
+
+  return {
+    ok: true,
+    value: updated
   };
 }
 
@@ -742,6 +816,29 @@ async function listReviewQueue(db: D1Database) {
     scannedBytes: row.scanned_bytes,
     submittedAt: row.submitted_at
   }));
+}
+
+async function getRunReview(db: D1Database, id: string) {
+  const row = await db
+    .prepare(
+      `SELECT id, workspace, query_type, status, estimated_cost_usd, scanned_bytes, submitted_at
+      FROM run_reviews
+      WHERE id = ?`
+    )
+    .bind(id)
+    .first<ReviewQueueRow>();
+
+  return row
+    ? {
+        id: row.id,
+        workspace: row.workspace,
+        queryType: row.query_type,
+        status: row.status,
+        estimatedCostUsd: row.estimated_cost_usd,
+        scannedBytes: row.scanned_bytes,
+        submittedAt: row.submitted_at
+      }
+    : null;
 }
 
 async function listAuditEvents(db: D1Database) {
