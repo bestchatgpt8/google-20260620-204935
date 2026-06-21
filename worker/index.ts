@@ -1,0 +1,312 @@
+import { getPhase3Health } from "../lib/phase2";
+import {
+  getPublicSession,
+  getSessionRole,
+  type AuthEnv
+} from "../lib/auth";
+import {
+  getSessionFromRequest,
+  jsonResponse,
+  requireAdminSession
+} from "../lib/auth-request";
+import type { AdminStorageEnv } from "../lib/admin-store";
+import { onRequestGet as onAuthStartGet } from "../functions/api/auth/start/[provider]";
+import { onRequestGet as onAuthCallbackGet } from "../functions/api/auth/callback/[provider]";
+import {
+  onRequestGet as onAuthLogoutGet,
+  onRequestPost as onAuthLogoutPost
+} from "../functions/api/auth/logout";
+import { onRequestGet as onAuthSessionGet } from "../functions/api/auth/session";
+import { onRequestGet as onAdminStateGet } from "../functions/api/admin/state";
+import { onRequestPatch as onAdminFeatureFlagPatch } from "../functions/api/admin/feature-flags/[id]";
+import { onRequestPost as onAdminRollbackPost } from "../functions/api/admin/rollback";
+
+type AssetFetcher = {
+  fetch(request: Request): Promise<Response>;
+};
+
+type WorkerEnv = AuthEnv &
+  AdminStorageEnv & {
+    ASSETS: AssetFetcher;
+  };
+
+type WorkerContext = {
+  waitUntil(promise: Promise<unknown>): void;
+};
+
+type RouteMatch = {
+  handler: () => Promise<Response> | Response;
+  allowedMethods: string[];
+};
+
+const worker = {
+  async fetch(request: Request, env: WorkerEnv, context: WorkerContext) {
+    try {
+      const response = await handleRequest(request, env, context);
+      return withSecurityHeaders(response);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "worker_request_failed",
+          message: error instanceof Error ? error.message : "Unknown error"
+        })
+      );
+
+      return jsonResponse(
+        {
+          ok: false,
+          code: "internal_error",
+          message: "GoogleSQL Worker could not complete this request."
+        },
+        { status: 500 }
+      );
+    }
+  }
+};
+
+export default worker;
+
+async function handleRequest(
+  request: Request,
+  env: WorkerEnv,
+  context: WorkerContext
+) {
+  const url = new URL(request.url);
+  const apiRoute = matchApiRoute(request, env, url);
+
+  if (apiRoute) {
+    if (!apiRoute.allowedMethods.includes(request.method)) {
+      return methodNotAllowed(apiRoute.allowedMethods);
+    }
+
+    return apiRoute.handler();
+  }
+
+  if (isAdminPageRequest(url.pathname)) {
+    const adminGate = await authorizeAdminPage(request, env);
+    if (adminGate) {
+      return adminGate;
+    }
+  }
+
+  context.waitUntil(Promise.resolve());
+  return serveStaticAsset(request, env);
+}
+
+function matchApiRoute(
+  request: Request,
+  env: WorkerEnv,
+  url: URL
+): RouteMatch | null {
+  if (url.pathname === "/api/health") {
+    return {
+      allowedMethods: ["GET", "HEAD"],
+      handler: () => Response.json(getPhase3Health())
+    };
+  }
+
+  const authStart = url.pathname.match(/^\/api\/auth\/start\/([^/]+)$/);
+  if (authStart) {
+    return {
+      allowedMethods: ["GET"],
+      handler: () =>
+        onAuthStartGet({
+          request,
+          env,
+          params: {
+            provider: authStart[1]
+          }
+        })
+    };
+  }
+
+  const authCallback = url.pathname.match(
+    /^\/api\/auth\/callback\/([^/]+)$/
+  );
+  if (authCallback) {
+    return {
+      allowedMethods: ["GET"],
+      handler: () =>
+        onAuthCallbackGet({
+          request,
+          env,
+          params: {
+            provider: authCallback[1]
+          }
+        })
+    };
+  }
+
+  if (url.pathname === "/api/auth/logout") {
+    return {
+      allowedMethods: ["GET", "POST"],
+      handler: () =>
+        request.method === "POST"
+          ? onAuthLogoutPost({ request })
+          : onAuthLogoutGet({ request })
+    };
+  }
+
+  if (url.pathname === "/api/auth/session") {
+    return {
+      allowedMethods: ["GET", "HEAD"],
+      handler: () => onAuthSessionGet({ request, env })
+    };
+  }
+
+  if (url.pathname === "/api/admin/state") {
+    return {
+      allowedMethods: ["GET", "HEAD"],
+      handler: () => onAdminStateGet({ request, env })
+    };
+  }
+
+  const featureFlag = url.pathname.match(
+    /^\/api\/admin\/feature-flags\/([^/]+)$/
+  );
+  if (featureFlag) {
+    return {
+      allowedMethods: ["PATCH"],
+      handler: () =>
+        onAdminFeatureFlagPatch({
+          request,
+          env,
+          params: {
+            id: featureFlag[1]
+          }
+        })
+    };
+  }
+
+  if (url.pathname === "/api/admin/rollback") {
+    return {
+      allowedMethods: ["POST"],
+      handler: () => onAdminRollbackPost({ request, env })
+    };
+  }
+
+  if (url.pathname.startsWith("/api/admin/")) {
+    return {
+      allowedMethods: ["GET", "POST", "PATCH"],
+      handler: async () => {
+        const auth = await requireAdminSession(request, env);
+        if (!auth.ok) {
+          return auth.response;
+        }
+
+        return jsonResponse(
+          {
+            ok: false,
+            code: "not_found",
+            message: "Admin API route not found.",
+            user: getPublicSession(auth.session)
+          },
+          { status: 404 }
+        );
+      }
+    };
+  }
+
+  return null;
+}
+
+async function authorizeAdminPage(request: Request, env: WorkerEnv) {
+  const url = new URL(request.url);
+
+  if (!env.AUTH_COOKIE_SECRET) {
+    return redirectToLogin(url, "auth_not_configured");
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return redirectToLogin(url, "unauthenticated");
+  }
+
+  if (getSessionRole(session) !== "admin") {
+    return jsonResponse(
+      {
+        ok: false,
+        code: "admin_required",
+        message: "Administrator access is required for /admin.",
+        user: getPublicSession(session)
+      },
+      { status: 403 }
+    );
+  }
+
+  return null;
+}
+
+async function serveStaticAsset(request: Request, env: WorkerEnv) {
+  const response = await env.ASSETS.fetch(request);
+  if (response.status !== 404) {
+    return response;
+  }
+
+  const url = new URL(request.url);
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return response;
+  }
+
+  if (!hasFileExtension(url.pathname)) {
+    const htmlUrl = new URL(url);
+    htmlUrl.pathname =
+      url.pathname === "/" ? "/index.html" : `${url.pathname}.html`;
+    const htmlResponse = await env.ASSETS.fetch(
+      new Request(htmlUrl.toString(), {
+        headers: request.headers,
+        method: request.method
+      })
+    );
+
+    if (htmlResponse.status !== 404) {
+      return htmlResponse;
+    }
+  }
+
+  return response;
+}
+
+function isAdminPageRequest(pathname: string) {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+function redirectToLogin(requestUrl: URL, error: string) {
+  const loginUrl = new URL("/login", requestUrl.origin);
+  loginUrl.searchParams.set("returnTo", "/admin");
+  loginUrl.searchParams.set("error", error);
+
+  return Response.redirect(loginUrl, 302);
+}
+
+function methodNotAllowed(allowedMethods: string[]) {
+  return jsonResponse(
+    {
+      ok: false,
+      code: "method_not_allowed",
+      message: `Use ${allowedMethods.join(" or ")} for this endpoint.`
+    },
+    {
+      status: 405,
+      headers: {
+        Allow: allowedMethods.join(", ")
+      }
+    }
+  );
+}
+
+function withSecurityHeaders(response: Response) {
+  const headers = new Headers(response.headers);
+  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  headers.set("X-Content-Type-Options", "nosniff");
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
+function hasFileExtension(pathname: string) {
+  return /\/[^/]+\.[^/]+$/.test(pathname);
+}

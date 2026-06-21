@@ -10,7 +10,9 @@
     "lint": "node node_modules/eslint/bin/eslint.js .",
     "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "test": "node node_modules/vitest/vitest.mjs run --environment node",
-    "ci": "npm run lint && npm run typecheck && npm run test && npm run build"
+    "ci": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "worker:dry-run": "npx wrangler deploy --config wrangler.worker.jsonc --dry-run",
+    "worker:deploy": "npx wrangler deploy --config wrangler.worker.jsonc --keep-vars"
   },
   "dependencies": {
     "clsx": "^2.1.1",

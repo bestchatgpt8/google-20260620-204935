@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "googlesql-worker-prod",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-06-21",
+  "assets": {
+    "directory": "./out",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "GOOGLESQL_DB",
+      "database_name": "googlesql",
+      "database_id": "e31f1bdf-af05-41cf-bca2-9b86eb55f18b"
+    }
+  ],
+  "vars": {
+    "ADMIN_EMAILS": "bestchatgpt8@gmail.com"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
