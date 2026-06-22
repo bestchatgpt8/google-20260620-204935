@@ -40,6 +40,10 @@ route is moved away from the Pages deployment.
 in `wrangler.worker.jsonc`. Removing them can make a later deploy drift away
 from the currently active Cloudflare route configuration.
 
+The `assets.run_worker_first` list must include `/admin*` and `/api/*`. Without
+that setting, Cloudflare can serve `/admin.html` directly from static assets
+before the Worker has a chance to enforce OAuth admin access.
+
 ## Phase 3B BigQuery Dry Run
 
 The `Run` button calls `/api/query/dry-run`. In production this endpoint should

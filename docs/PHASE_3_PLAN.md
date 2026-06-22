@@ -55,6 +55,8 @@ logging, and API-backed rollout controls.
   custom-domain routes so Wrangler deploys match the production Worker routes.
 - Authenticated `/admin` static responses are returned with `private,
   no-store` cache headers after the Worker admin gate succeeds.
+- Cloudflare static assets run the Worker first for `/admin*` and `/api/*` so
+  admin HTML and API routes cannot bypass the Worker gate.
 - `/api/admin/run-reviews/:id` supports `GET` for admin-only run detail reads,
   including SQL text, mode, cost, scan bytes, referenced tables, safety checks,
   and stored dry-run errors.

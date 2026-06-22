@@ -311,7 +311,11 @@ async function serveStaticAsset(request: Request, env: WorkerEnv) {
 }
 
 function isAdminPageRequest(pathname: string) {
-  return pathname === "/admin" || pathname.startsWith("/admin/");
+  return (
+    pathname === "/admin" ||
+    pathname.startsWith("/admin/") ||
+    pathname.startsWith("/admin.")
+  );
 }
 
 function redirectToLogin(requestUrl: URL, error: string) {

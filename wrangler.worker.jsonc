@@ -15,7 +15,11 @@
   ],
   "assets": {
     "directory": "./out",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*",
+      "/admin*"
+    ]
   },
   "d1_databases": [
     {
