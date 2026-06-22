@@ -8,17 +8,27 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  CreditCard,
   Database,
   GitBranch,
   LockKeyhole,
   RefreshCcw,
   RotateCcw,
+  Save,
+  MessageSquareText,
   ShieldCheck,
   SlidersHorizontal,
   UsersRound,
   Zap
 } from "lucide-react";
 import type { AdminState, QueryRunDetail } from "@/lib/admin-store";
+import {
+  type PricingInterval,
+  type PricingPaymentMode,
+  type PricingPlan
+} from "@/lib/pricing";
+import type { AdminDocsFeedback } from "@/lib/docs-feedback";
+import type { DocsFeedbackStatus } from "@/lib/docs-content";
 import {
   formatBytes,
   formatCost,
@@ -62,10 +72,50 @@ type RunDetailState =
   | { status: "ready"; run: QueryRunDetail }
   | { status: "error"; id: string; message: string };
 
+type PricingLoadState =
+  | { status: "loading" }
+  | { status: "ready"; plans: EditablePricingPlan[]; persisted: boolean }
+  | { status: "error"; message: string };
+
+type DocsFeedbackLoadState =
+  | { status: "loading" }
+  | { status: "ready"; feedback: EditableDocsFeedback[]; persisted: boolean }
+  | { status: "error"; message: string };
+
+type EditablePricingPlan = Omit<PricingPlan, "priceCents" | "features"> & {
+  priceInput: string;
+  featuresText: string;
+};
+
+type EditableDocsFeedback = AdminDocsFeedback & {
+  answerDraft: string;
+};
+
 type RunDetailResponse = {
   ok?: boolean;
   run?: QueryRunDetail;
   code?: string;
+  message?: string;
+};
+
+type PricingPlansResponse = {
+  ok?: boolean;
+  plans?: PricingPlan[];
+  persisted?: boolean;
+  message?: string;
+};
+
+type PricingPlanResponse = {
+  ok?: boolean;
+  plan?: PricingPlan;
+  code?: string;
+  message?: string;
+};
+
+type DocsFeedbackAdminResponse = {
+  ok?: boolean;
+  feedback?: AdminDocsFeedback[] | AdminDocsFeedback;
+  persisted?: boolean;
   message?: string;
 };
 
@@ -85,6 +135,17 @@ export function AdminConsole() {
   const [pendingFlagId, setPendingFlagId] = useState<string | null>(null);
   const [pendingReviewId, setPendingReviewId] = useState<string | null>(null);
   const [pendingSchemaFieldId, setPendingSchemaFieldId] = useState<
+    string | null
+  >(null);
+  const [pricingLoadState, setPricingLoadState] = useState<PricingLoadState>({
+    status: "loading"
+  });
+  const [pendingPricingId, setPendingPricingId] = useState<string | null>(null);
+  const [docsFeedbackLoadState, setDocsFeedbackLoadState] =
+    useState<DocsFeedbackLoadState>({
+      status: "loading"
+    });
+  const [pendingDocsFeedbackId, setPendingDocsFeedbackId] = useState<
     string | null
   >(null);
   const [runDetail, setRunDetail] = useState<RunDetailState>({
@@ -138,9 +199,76 @@ export function AdminConsole() {
     }
   }, []);
 
+  const loadPricingPlans = useCallback(async () => {
+    try {
+      const response = await fetch("/api/admin/pricing-plans", {
+        cache: "no-store",
+        credentials: "include"
+      });
+      const data = (await response.json().catch(() => null)) as
+        | PricingPlansResponse
+        | null;
+
+      if (!response.ok || !Array.isArray(data?.plans)) {
+        throw new Error(data?.message ?? "Pricing plans could not be loaded.");
+      }
+
+      setPricingLoadState({
+        status: "ready",
+        plans: data.plans.map(toEditablePricingPlan),
+        persisted: data.persisted ?? false
+      });
+    } catch (error) {
+      setPricingLoadState({
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Pricing plans could not be loaded."
+      });
+    }
+  }, []);
+
+  const loadDocsFeedback = useCallback(async () => {
+    try {
+      const response = await fetch("/api/admin/docs-feedback", {
+        cache: "no-store",
+        credentials: "include"
+      });
+      const data = (await response.json().catch(() => null)) as
+        | DocsFeedbackAdminResponse
+        | null;
+
+      if (!response.ok || !Array.isArray(data?.feedback)) {
+        throw new Error(data?.message ?? "Docs feedback could not be loaded.");
+      }
+
+      setDocsFeedbackLoadState({
+        status: "ready",
+        feedback: data.feedback.map(toEditableDocsFeedback),
+        persisted: data.persisted ?? false
+      });
+    } catch (error) {
+      setDocsFeedbackLoadState({
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Docs feedback could not be loaded."
+      });
+    }
+  }, []);
+
   useEffect(() => {
     void refreshAdminState();
   }, [refreshAdminState]);
+
+  useEffect(() => {
+    if (loadState.status === "ready") {
+      void loadPricingPlans();
+      void loadDocsFeedback();
+    }
+  }, [loadDocsFeedback, loadPricingPlans, loadState.status]);
 
   useEffect(() => {
     if (
@@ -390,6 +518,158 @@ export function AdminConsole() {
     }
   }
 
+  function updatePricingDraft(
+    id: string,
+    patch: Partial<EditablePricingPlan>
+  ) {
+    setPricingLoadState((current) => {
+      if (current.status !== "ready") {
+        return current;
+      }
+
+      return {
+        ...current,
+        plans: current.plans.map((plan) =>
+          plan.id === id
+            ? {
+                ...plan,
+                ...patch
+              }
+            : plan
+        )
+      };
+    });
+  }
+
+  async function savePricingPlan(plan: EditablePricingPlan) {
+    const priceCents = parsePriceInput(plan.priceInput);
+    const features = parseFeaturesInput(plan.featuresText);
+
+    if (priceCents === null) {
+      setNotice("Plan price must be zero or a positive amount.");
+      return;
+    }
+
+    if (!features.length) {
+      setNotice("A plan needs at least one feature.");
+      return;
+    }
+
+    setPendingPricingId(plan.id);
+    setNotice(null);
+
+    try {
+      const response = await fetch(`/api/admin/pricing-plans/${plan.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: plan.name,
+          description: plan.description,
+          priceCents,
+          currency: plan.currency,
+          interval: plan.interval,
+          features,
+          ctaLabel: plan.ctaLabel,
+          paymentMode: plan.paymentMode,
+          stripePriceId: plan.stripePriceId,
+          paymentLinkUrl: plan.paymentLinkUrl,
+          highlighted: plan.highlighted,
+          active: plan.active,
+          sortOrder: plan.sortOrder
+        })
+      });
+      const data = (await response.json().catch(() => null)) as
+        | PricingPlanResponse
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.message ?? "Pricing plan update failed.");
+      }
+
+      if (!isPricingPlanResponse(data)) {
+        throw new Error("Pricing plan update returned an unexpected response.");
+      }
+
+      replaceEditablePricingPlan(data.plan);
+      setNotice("Pricing plan saved. Public pricing will use the updated values.");
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Pricing plan update failed."
+      );
+    } finally {
+      setPendingPricingId(null);
+    }
+  }
+
+  function updateDocsAnswerDraft(id: string, answerDraft: string) {
+    setDocsFeedbackLoadState((current) => {
+      if (current.status !== "ready") {
+        return current;
+      }
+
+      return {
+        ...current,
+        feedback: current.feedback.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                answerDraft
+              }
+            : item
+        )
+      };
+    });
+  }
+
+  async function saveDocsFeedback(
+    item: EditableDocsFeedback,
+    status: DocsFeedbackStatus = item.status
+  ) {
+    setPendingDocsFeedbackId(item.id);
+    setNotice(null);
+
+    try {
+      const response = await fetch(`/api/admin/docs-feedback/${item.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          status,
+          answerText: item.answerDraft
+        })
+      });
+      const data = (await response.json().catch(() => null)) as
+        | DocsFeedbackAdminResponse
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.message ?? "Docs feedback update failed.");
+      }
+
+      if (!isAdminDocsFeedback(data?.feedback)) {
+        throw new Error("Docs feedback update returned an unexpected response.");
+      }
+
+      replaceEditableDocsFeedback(data.feedback);
+      setNotice(
+        status === "approved"
+          ? "Docs feedback published. The public Docs page can show it now."
+          : "Docs feedback saved and held for review."
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Docs feedback update failed."
+      );
+    } finally {
+      setPendingDocsFeedbackId(null);
+    }
+  }
+
   async function openRunDetail(id: string) {
     setRunDetail({
       status: "loading",
@@ -480,6 +760,36 @@ export function AdminConsole() {
             )
           }))
         }
+      };
+    });
+  }
+
+  function replaceEditablePricingPlan(plan: PricingPlan) {
+    setPricingLoadState((current) => {
+      if (current.status !== "ready") {
+        return current;
+      }
+
+      return {
+        ...current,
+        plans: current.plans.map((item) =>
+          item.id === plan.id ? toEditablePricingPlan(plan) : item
+        )
+      };
+    });
+  }
+
+  function replaceEditableDocsFeedback(feedback: AdminDocsFeedback) {
+    setDocsFeedbackLoadState((current) => {
+      if (current.status !== "ready") {
+        return current;
+      }
+
+      return {
+        ...current,
+        feedback: current.feedback.map((item) =>
+          item.id === feedback.id ? toEditableDocsFeedback(feedback) : item
+        )
       };
     });
   }
@@ -825,6 +1135,14 @@ export function AdminConsole() {
               ))}
             </div>
           </section>
+
+          <PricingPlansPanel
+            state={pricingLoadState}
+            pendingPlanId={pendingPricingId}
+            onChange={updatePricingDraft}
+            onSave={(plan) => void savePricingPlan(plan)}
+            onRefresh={() => void loadPricingPlans()}
+          />
         </div>
 
         <aside className="min-w-0 space-y-5">
@@ -918,6 +1236,14 @@ export function AdminConsole() {
                 status: "idle"
               })
             }
+          />
+
+          <DocsFeedbackModerationPanel
+            state={docsFeedbackLoadState}
+            pendingFeedbackId={pendingDocsFeedbackId}
+            onAnswerChange={updateDocsAnswerDraft}
+            onSave={(item, status) => void saveDocsFeedback(item, status)}
+            onRefresh={() => void loadDocsFeedback()}
           />
 
           <SchemaCatalogPanel
@@ -1124,6 +1450,452 @@ function ConfigMetric({ label, value }: { label: string; value: string }) {
         {value}
       </span>
     </span>
+  );
+}
+
+function PricingPlansPanel({
+  state,
+  pendingPlanId,
+  onChange,
+  onSave,
+  onRefresh
+}: {
+  state: PricingLoadState;
+  pendingPlanId: string | null;
+  onChange: (id: string, patch: Partial<EditablePricingPlan>) => void;
+  onSave: (plan: EditablePricingPlan) => void;
+  onRefresh: () => void;
+}) {
+  let body: ReactNode;
+  let action = "Loading";
+
+  if (state.status === "loading") {
+    body = (
+      <div className="flex items-center gap-3 p-5 text-sm text-slate-500">
+        <RefreshCcw className="h-4 w-4 animate-spin text-[#60a5fa]" />
+        Loading pricing plans...
+      </div>
+    );
+  } else if (state.status === "error") {
+    action = "Unavailable";
+    body = (
+      <div className="space-y-4 p-5">
+        <div className="rounded-lg border border-[#fbbc05]/20 bg-[#fbbc05]/[0.08] p-4">
+          <p className="text-sm font-semibold text-slate-100">
+            Pricing settings unavailable
+          </p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            {state.message}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/[0.08]"
+        >
+          <RefreshCcw className="h-3.5 w-3.5" />
+          Retry
+        </button>
+      </div>
+    );
+  } else {
+    action = state.persisted ? "D1 backed" : "Preview";
+    body = (
+      <div className="divide-y divide-white/[0.07]">
+        {!state.persisted ? (
+          <div className="px-5 py-4">
+            <p className="rounded-lg border border-[#fbbc05]/20 bg-[#fbbc05]/[0.08] px-3 py-2 text-xs leading-5 text-[#fde68a]">
+              D1 is not bound; pricing is shown as preview seed data and cannot
+              be saved until GOOGLESQL_DB is configured.
+            </p>
+          </div>
+        ) : null}
+
+        {state.plans.map((plan) => {
+          const isPending = pendingPlanId === plan.id;
+
+          return (
+            <div key={plan.id} className="px-5 py-5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold text-slate-100">
+                      {plan.name || plan.id}
+                    </h3>
+                    <span className="rounded border border-[#34a853]/20 bg-[#34a853]/10 px-2 py-1 text-[11px] font-semibold text-[#4ade80]">
+                      {formatPlanAmount(plan.priceInput, plan.currency)} /{" "}
+                      {plan.interval}
+                    </span>
+                    {!plan.active ? (
+                      <span className="rounded border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[11px] font-semibold text-slate-500">
+                        hidden
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    Payment mode: {plan.paymentMode.replace("_", " ")}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => onSave(plan)}
+                  className="focus-ring inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#4285f4] px-3 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isPending ? (
+                    <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  {isPending ? "Saving" : "Save plan"}
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <label className="grid gap-2 text-xs font-semibold text-slate-400">
+                  Name
+                  <input
+                    value={plan.name}
+                    onChange={(event) =>
+                      onChange(plan.id, { name: event.currentTarget.value })
+                    }
+                    className="h-10 rounded-md border border-white/[0.08] bg-black/[0.18] px-3 text-sm text-slate-100 outline-none focus:border-[#4285f4]/45"
+                  />
+                </label>
+
+                <label className="grid gap-2 text-xs font-semibold text-slate-400">
+                  CTA label
+                  <input
+                    value={plan.ctaLabel}
+                    onChange={(event) =>
+                      onChange(plan.id, { ctaLabel: event.currentTarget.value })
+                    }
+                    className="h-10 rounded-md border border-white/[0.08] bg-black/[0.18] px-3 text-sm text-slate-100 outline-none focus:border-[#4285f4]/45"
+                  />
+                </label>
+
+                <label className="grid gap-2 text-xs font-semibold text-slate-400 lg:col-span-2">
+                  Description
+                  <textarea
+                    value={plan.description}
+                    rows={2}
+                    onChange={(event) =>
+                      onChange(plan.id, {
+                        description: event.currentTarget.value
+                      })
+                    }
+                    className="resize-none rounded-md border border-white/[0.08] bg-black/[0.18] px-3 py-2 text-sm leading-6 text-slate-100 outline-none focus:border-[#4285f4]/45"
+                  />
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-3 lg:col-span-2">
+                  <label className="grid gap-2 text-xs font-semibold text-slate-400">
+                    Price
+                    <input
+                      value={plan.priceInput}
+                      inputMode="decimal"
+                      onChange={(event) =>
+                        onChange(plan.id, {
+                          priceInput: event.currentTarget.value
+                        })
+                      }
+                      className="h-10 rounded-md border border-white/[0.08] bg-black/[0.18] px-3 text-sm text-slate-100 outline-none focus:border-[#4285f4]/45"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-xs font-semibold text-slate-400">
+                    Currency
+                    <input
+                      value={plan.currency}
+                      maxLength={3}
+                      onChange={(event) =>
+                        onChange(plan.id, {
+                          currency: event.currentTarget.value.toUpperCase()
+                        })
+                      }
+                      className="h-10 rounded-md border border-white/[0.08] bg-black/[0.18] px-3 text-sm text-slate-100 outline-none focus:border-[#4285f4]/45"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-xs font-semibold text-slate-400">
+                    Interval
+                    <select
+                      value={plan.interval}
+                      onChange={(event) =>
+                        onChange(plan.id, {
+                          interval: event.currentTarget.value as PricingInterval
+                        })
+                      }
+                      className="h-10 rounded-md border border-white/[0.08] bg-black/[0.18] px-3 text-sm text-slate-100 outline-none focus:border-[#4285f4]/45"
+                    >
+                      <option value="month">Month</option>
+                      <option value="year">Year</option>
+                    </select>
+                  </label>
+                </div>
+
+                <label className="grid gap-2 text-xs font-semibold text-slate-400 lg:col-span-2">
+                  Features
+                  <textarea
+                    value={plan.featuresText}
+                    rows={4}
+                    onChange={(event) =>
+                      onChange(plan.id, {
+                        featuresText: event.currentTarget.value
+                      })
+                    }
+                    className="resize-none rounded-md border border-white/[0.08] bg-black/[0.18] px-3 py-2 text-sm leading-6 text-slate-100 outline-none focus:border-[#4285f4]/45"
+                  />
+                </label>
+
+                <div className="grid gap-3 lg:col-span-2 lg:grid-cols-[220px_minmax(0,1fr)]">
+                  <label className="grid gap-2 text-xs font-semibold text-slate-400">
+                    Payment mode
+                    <select
+                      value={plan.paymentMode}
+                      onChange={(event) =>
+                        onChange(plan.id, {
+                          paymentMode: event.currentTarget
+                            .value as PricingPaymentMode
+                        })
+                      }
+                      className="h-10 rounded-md border border-white/[0.08] bg-black/[0.18] px-3 text-sm text-slate-100 outline-none focus:border-[#4285f4]/45"
+                    >
+                      <option value="free">Free</option>
+                      <option value="stripe_checkout">Stripe Checkout</option>
+                      <option value="payment_link">Payment link</option>
+                    </select>
+                  </label>
+
+                  <label className="grid gap-2 text-xs font-semibold text-slate-400">
+                    Stripe price ID or payment link
+                    <input
+                      value={
+                        plan.paymentMode === "payment_link"
+                          ? plan.paymentLinkUrl
+                          : plan.stripePriceId
+                      }
+                      placeholder={
+                        plan.paymentMode === "payment_link"
+                          ? "https://buy.stripe.com/..."
+                          : "Optional price_..."
+                      }
+                      onChange={(event) =>
+                        onChange(
+                          plan.id,
+                          plan.paymentMode === "payment_link"
+                            ? { paymentLinkUrl: event.currentTarget.value }
+                            : { stripePriceId: event.currentTarget.value }
+                        )
+                      }
+                      className="h-10 rounded-md border border-white/[0.08] bg-black/[0.18] px-3 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-[#4285f4]/45"
+                    />
+                  </label>
+                </div>
+
+                <div className="flex flex-wrap gap-3 lg:col-span-2">
+                  <label className="inline-flex h-9 items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.035] px-3 text-xs font-semibold text-slate-300 transition focus-within:border-[#4285f4]/40">
+                    <input
+                      type="checkbox"
+                      checked={plan.highlighted}
+                      onChange={(event) =>
+                        onChange(plan.id, {
+                          highlighted: event.currentTarget.checked
+                        })
+                      }
+                      className="h-3.5 w-3.5 accent-[#4285f4]"
+                    />
+                    Highlight
+                  </label>
+                  <label className="inline-flex h-9 items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.035] px-3 text-xs font-semibold text-slate-300 transition focus-within:border-[#34a853]/40">
+                    <input
+                      type="checkbox"
+                      checked={plan.active}
+                      onChange={(event) =>
+                        onChange(plan.id, {
+                          active: event.currentTarget.checked
+                        })
+                      }
+                      className="h-3.5 w-3.5 accent-[#34a853]"
+                    />
+                    Show publicly
+                  </label>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <section className="glass-panel overflow-hidden rounded-lg">
+      <SectionHeader icon={CreditCard} title="Pricing Plans" action={action} />
+      {body}
+    </section>
+  );
+}
+
+function DocsFeedbackModerationPanel({
+  state,
+  pendingFeedbackId,
+  onAnswerChange,
+  onSave,
+  onRefresh
+}: {
+  state: DocsFeedbackLoadState;
+  pendingFeedbackId: string | null;
+  onAnswerChange: (id: string, answerDraft: string) => void;
+  onSave: (item: EditableDocsFeedback, status?: DocsFeedbackStatus) => void;
+  onRefresh: () => void;
+}) {
+  let body: ReactNode;
+  let action = "Loading";
+
+  if (state.status === "loading") {
+    body = (
+      <div className="flex items-center gap-3 p-5 text-sm text-slate-500">
+        <RefreshCcw className="h-4 w-4 animate-spin text-[#60a5fa]" />
+        Loading docs feedback...
+      </div>
+    );
+  } else if (state.status === "error") {
+    action = "Unavailable";
+    body = (
+      <div className="space-y-4 p-5">
+        <div className="rounded-lg border border-[#fbbc05]/20 bg-[#fbbc05]/[0.08] p-4">
+          <p className="text-sm font-semibold text-slate-100">
+            Docs Q&A unavailable
+          </p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            {state.message}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/[0.08]"
+        >
+          <RefreshCcw className="h-3.5 w-3.5" />
+          Retry
+        </button>
+      </div>
+    );
+  } else {
+    const pendingCount = state.feedback.filter(
+      (item) => item.status === "pending"
+    ).length;
+    action = `${pendingCount} pending`;
+
+    body = (
+      <div className="divide-y divide-white/[0.07]">
+        {!state.persisted ? (
+          <div className="px-5 py-4">
+            <p className="rounded-lg border border-[#fbbc05]/20 bg-[#fbbc05]/[0.08] px-3 py-2 text-xs leading-5 text-[#fde68a]">
+              D1 is not bound; this panel shows seed Q&A only. Connect
+              GOOGLESQL_DB to save replies and publish user questions.
+            </p>
+          </div>
+        ) : null}
+
+        {state.feedback.length ? (
+          state.feedback.map((item) => {
+            const isPending = pendingFeedbackId === item.id;
+
+            return (
+              <div key={item.id} className="px-5 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={cn(
+                        "rounded border px-2 py-1 text-[11px] font-semibold",
+                        item.status === "approved"
+                          ? "border-[#34a853]/25 bg-[#34a853]/10 text-[#4ade80]"
+                          : "border-[#fbbc05]/25 bg-[#fbbc05]/10 text-[#facc15]"
+                      )}
+                    >
+                      {item.status}
+                    </span>
+                    <span className="rounded border border-[#4285f4]/20 bg-[#4285f4]/10 px-2 py-1 text-[11px] font-semibold text-[#93c5fd]">
+                      {item.kind}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-600">
+                    {formatDateTime(item.createdAt)}
+                  </span>
+                </div>
+
+                <p className="mt-3 text-xs font-semibold text-slate-300">
+                  {item.topic}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-100">
+                  {item.message}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  {item.authorName}
+                  {item.authorEmail ? ` / ${item.authorEmail}` : ""}
+                </p>
+
+                <label className="mt-4 grid gap-2 text-xs font-semibold text-slate-400">
+                  Official answer
+                  <textarea
+                    value={item.answerDraft}
+                    rows={4}
+                    onChange={(event) =>
+                      onAnswerChange(item.id, event.currentTarget.value)
+                    }
+                    placeholder="Write the admin answer shown under this question..."
+                    className="resize-none rounded-md border border-white/[0.08] bg-black/[0.18] px-3 py-2 text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-600 focus:border-[#4285f4]/45"
+                  />
+                </label>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => onSave(item)}
+                    className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#4285f4]/25 bg-[#4285f4]/10 px-3 text-xs font-semibold text-[#93c5fd] transition hover:bg-[#4285f4]/15 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => onSave(item, "approved")}
+                    className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#34a853]/25 bg-[#34a853]/10 px-3 text-xs font-semibold text-[#4ade80] transition hover:bg-[#34a853]/15 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Publish
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => onSave(item, "pending")}
+                    className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#fbbc05]/25 bg-[#fbbc05]/10 px-3 text-xs font-semibold text-[#facc15] transition hover:bg-[#fbbc05]/15 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <Clock3 className="h-3.5 w-3.5" />
+                    Hold
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="p-5 text-sm text-slate-500">
+            No docs questions or comments yet.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <section className="glass-panel overflow-hidden rounded-lg">
+      <SectionHeader icon={MessageSquareText} title="Docs Q&A" action={action} />
+      {body}
+    </section>
   );
 }
 
@@ -1551,6 +2323,67 @@ function formatRuntime(value: number) {
   return `${(value / 1000).toFixed(1)}s`;
 }
 
+function toEditablePricingPlan(plan: PricingPlan): EditablePricingPlan {
+  return {
+    ...plan,
+    priceInput: (plan.priceCents / 100).toFixed(
+      plan.priceCents % 100 === 0 ? 0 : 2
+    ),
+    featuresText: plan.features.join("\n")
+  };
+}
+
+function toEditableDocsFeedback(
+  feedback: AdminDocsFeedback
+): EditableDocsFeedback {
+  return {
+    ...feedback,
+    answerDraft: feedback.answerText ?? ""
+  };
+}
+
+function parsePriceInput(value: string) {
+  const normalized = value.replace(/[$,\s]/g, "");
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return Math.round(parsed * 100);
+}
+
+function parseFeaturesInput(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatPlanAmount(value: string, currency: string) {
+  const priceCents = parsePriceInput(value);
+  if (priceCents === null) {
+    return `${currency} --`;
+  }
+
+  if (priceCents === 0) {
+    return "$0";
+  }
+
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: priceCents % 100 === 0 ? 0 : 2
+    }).format(priceCents / 100);
+  } catch {
+    return `${currency || "USD"} ${(priceCents / 100).toFixed(2)}`;
+  }
+}
+
 function isAdminStateResponse(value: unknown): value is {
   ok: true;
   user: AdminUser;
@@ -1568,6 +2401,28 @@ function isFeatureFlagResponse(value: unknown): value is {
   featureFlag: Phase2FeatureFlag;
 } {
   return isRecord(value) && value.ok === true && isRecord(value.featureFlag);
+}
+
+function isPricingPlanResponse(value: unknown): value is {
+  ok: true;
+  plan: PricingPlan;
+} {
+  return (
+    isRecord(value) &&
+    value.ok === true &&
+    isRecord(value.plan) &&
+    typeof value.plan.id === "string"
+  );
+}
+
+function isAdminDocsFeedback(value: unknown): value is AdminDocsFeedback {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    (value.kind === "question" || value.kind === "comment") &&
+    (value.status === "approved" || value.status === "pending") &&
+    typeof value.message === "string"
+  );
 }
 
 function isRunReviewResponse(value: unknown): value is {

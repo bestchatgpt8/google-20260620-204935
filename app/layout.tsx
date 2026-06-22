@@ -4,14 +4,15 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL("https://googlesql.com"),
   title: {
-    default: "GoogleSQL Copilot - AI Data Analyst for BigQuery",
+    default: "GoogleSQL - Multilingual SQL Workflow for BigQuery Teams",
     template: "%s | GoogleSQL"
   },
   description:
-    "Generate, explain, and optimize GoogleSQL for BigQuery with an AI Data Analyst workflow.",
+    "Generate, validate, and govern GoogleSQL with schema-aware SQL, BigQuery dry-runs, admin review, and multilingual learning flows.",
   openGraph: {
-    title: "GoogleSQL Copilot",
-    description: "Your AI Data Analyst for BigQuery.",
+    title: "GoogleSQL",
+    description:
+      "A multilingual GoogleSQL workflow for generation, validation, governance, and learning.",
     url: "https://googlesql.com",
     siteName: "GoogleSQL",
     type: "website"
@@ -33,4 +34,3 @@ export default function RootLayout({
     </html>
   );
 }
-

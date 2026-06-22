@@ -7,9 +7,9 @@ export function SiteFooter() {
           endorsed by, or sponsored by Google.
         </p>
         <p>
-          Phase 2 adds admin release controls and dry-run gates. Live database
-          execution, billing, and authenticated enterprise controls remain staged
-          for later phases.
+          Admin release controls, dry-run gates, pricing management, and secure
+          checkout are staged through the Worker deployment. Live database
+          execution remains governed by BigQuery dry-run safety controls.
         </p>
       </div>
     </footer>

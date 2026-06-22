@@ -30,6 +30,24 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pricing_plans (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  price_cents INTEGER NOT NULL,
+  currency TEXT NOT NULL,
+  interval TEXT NOT NULL,
+  features_json TEXT NOT NULL,
+  cta_label TEXT NOT NULL,
+  payment_mode TEXT NOT NULL,
+  stripe_price_id TEXT,
+  payment_link_url TEXT,
+  highlighted INTEGER NOT NULL,
+  active INTEGER NOT NULL,
+  sort_order INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS run_reviews (
   id TEXT PRIMARY KEY,
   workspace TEXT NOT NULL,
@@ -90,6 +108,20 @@ CREATE TABLE IF NOT EXISTS schema_fields (
   UNIQUE(table_id, field_name)
 );
 
+CREATE TABLE IF NOT EXISTS docs_feedback (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  author_name TEXT NOT NULL,
+  author_email TEXT,
+  message TEXT NOT NULL,
+  status TEXT NOT NULL,
+  answer_text TEXT,
+  answered_by TEXT,
+  answered_at TEXT,
+  created_at TEXT NOT NULL
+);
+
 INSERT OR IGNORE INTO feature_flags
   (id, name, description, status, environment, rollout, owner, updated_at)
 VALUES
@@ -126,7 +158,7 @@ VALUES
   (
     'team-billing',
     'Team billing',
-    'Plan and usage controls before payment integration.',
+    'Plan, usage, and checkout controls for paid workspaces.',
     'paused',
     'dev',
     0,
@@ -140,6 +172,77 @@ VALUES
   ('analytics', 'Data Team', 'Team', 'allowlisted', '2026-06-20T00:00:00.000Z'),
   ('marketing', 'Growth', 'Pro', 'review', '2026-06-20T00:00:00.000Z'),
   ('sandbox', 'Learning', 'Free', 'blocked', '2026-06-20T00:00:00.000Z');
+
+INSERT OR IGNORE INTO pricing_plans
+  (
+    id,
+    name,
+    description,
+    price_cents,
+    currency,
+    interval,
+    features_json,
+    cta_label,
+    payment_mode,
+    stripe_price_id,
+    payment_link_url,
+    highlighted,
+    active,
+    sort_order,
+    updated_at
+  )
+VALUES
+  (
+    'free',
+    'Free',
+    'For learning GoogleSQL and trying the Copilot tools.',
+    0,
+    'USD',
+    'month',
+    '["20 questions per day","1 datasource","Tutorials and cheat sheets"]',
+    'Start free',
+    'free',
+    NULL,
+    NULL,
+    0,
+    1,
+    10,
+    '2026-06-22T00:00:00.000Z'
+  ),
+  (
+    'pro',
+    'Pro',
+    'For analysts who use BigQuery every week.',
+    9900,
+    'USD',
+    'month',
+    '["More questions","Saved history","Schema-aware SQL generation"]',
+    'Pay with Stripe',
+    'stripe_checkout',
+    NULL,
+    NULL,
+    1,
+    1,
+    20,
+    '2026-06-22T00:00:00.000Z'
+  ),
+  (
+    'team',
+    'Team',
+    'For teams that want shared data workflows.',
+    29900,
+    'USD',
+    'month',
+    '["Team workspace","Shared datasource context","Usage logs"]',
+    'Pay with Stripe',
+    'stripe_checkout',
+    NULL,
+    NULL,
+    0,
+    1,
+    30,
+    '2026-06-22T00:00:00.000Z'
+  );
 
 INSERT OR IGNORE INTO schema_tables
   (id, workspace, table_name, description, row_count, updated_at)
@@ -186,6 +289,48 @@ VALUES
   ('table-analytics-events-event-name', 'table-analytics-events', 'event_name', 'STRING', 'NULLABLE', 'Event name column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
   ('table-analytics-events-user-id', 'table-analytics-events', 'user_id', 'STRING', 'NULLABLE', 'User id column.', 1, 0, 0, '2026-06-22T00:00:00.000Z'),
   ('table-analytics-events-session-id', 'table-analytics-events', 'session_id', 'STRING', 'NULLABLE', 'Session id column.', 1, 0, 0, '2026-06-22T00:00:00.000Z');
+
+INSERT OR IGNORE INTO docs_feedback
+  (
+    id,
+    kind,
+    topic,
+    author_name,
+    author_email,
+    message,
+    status,
+    answer_text,
+    answered_by,
+    answered_at,
+    created_at
+  )
+VALUES
+  (
+    'seed-docs-question-1',
+    'question',
+    'BigQuery dry-run',
+    'Data analyst',
+    NULL,
+    'Can I see the estimated bytes before asking an admin to approve a generated query?',
+    'approved',
+    'Yes. Dry-run results show estimated bytes, cost, runtime, referenced tables, and safety checks before an admin approves a run.',
+    'GoogleSQL admin',
+    '2026-06-22T00:00:00.000Z',
+    '2026-06-22T00:00:00.000Z'
+  ),
+  (
+    'seed-docs-comment-1',
+    'comment',
+    'Schema catalog',
+    'Workspace owner',
+    NULL,
+    'The field-level queryable and PII toggles make the approval workflow much easier to explain to analysts.',
+    'approved',
+    NULL,
+    NULL,
+    NULL,
+    '2026-06-22T00:00:00.000Z'
+  );
 
 INSERT OR IGNORE INTO run_reviews
   (id, workspace, query_type, status, estimated_cost_usd, scanned_bytes, submitted_at)

@@ -34,6 +34,12 @@ export const publicRoutes: PublicRoute[] = [
     priority: 0.85
   },
   {
+    path: "/docs",
+    lastModified: "2026-06-22",
+    changeFrequency: "weekly",
+    priority: 0.9
+  },
+  {
     path: "/cheat-sheets",
     lastModified: "2026-06-19",
     changeFrequency: "monthly",

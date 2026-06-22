@@ -148,7 +148,7 @@ export const phase2FeatureFlags: Phase2FeatureFlag[] = [
   {
     id: "team-billing",
     name: "Team billing",
-    description: "Plan and usage controls before payment integration.",
+    description: "Plan, usage, and checkout controls for paid workspaces.",
     status: "paused",
     environment: "dev",
     rollout: 0,

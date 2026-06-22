@@ -26,7 +26,18 @@ import {
 } from "../functions/api/admin/run-reviews/[id]";
 import { onRequestPatch as onAdminSchemaFieldPatch } from "../functions/api/admin/schema-fields/[id]";
 import { onRequestPost as onAdminRollbackPost } from "../functions/api/admin/rollback";
+import {
+  onRequestGet as onDocsFeedbackGet,
+  onRequestPost as onDocsFeedbackPost
+} from "../functions/api/docs/feedback";
+import { onRequestPost as onBillingCheckoutPost } from "../functions/api/billing/checkout";
+import { onRequestGet as onPricingGet } from "../functions/api/pricing";
+import { onRequestGet as onAdminPricingPlansGet } from "../functions/api/admin/pricing-plans";
+import { onRequestPatch as onAdminPricingPlanPatch } from "../functions/api/admin/pricing-plans/[id]";
+import { onRequestGet as onAdminDocsFeedbackGet } from "../functions/api/admin/docs-feedback";
+import { onRequestPatch as onAdminDocsFeedbackPatch } from "../functions/api/admin/docs-feedback/[id]";
 import { onRequestPost as onQueryDryRunPost } from "../functions/api/query/dry-run";
+import type { BillingEnv } from "../lib/billing";
 
 type AssetFetcher = {
   fetch(request: Request): Promise<Response>;
@@ -36,7 +47,8 @@ type WorkerEnv = AuthEnv &
   AdminStorageEnv &
   BigQueryEnv & {
     ASSETS: AssetFetcher;
-  };
+  } &
+  BillingEnv;
 
 type WorkerContext = {
   waitUntil(promise: Promise<unknown>): void;
@@ -173,6 +185,54 @@ function matchApiRoute(
     };
   }
 
+  if (url.pathname === "/api/admin/pricing-plans") {
+    return {
+      allowedMethods: ["GET", "HEAD"],
+      handler: () => onAdminPricingPlansGet({ request, env })
+    };
+  }
+
+  if (url.pathname === "/api/admin/docs-feedback") {
+    return {
+      allowedMethods: ["GET", "HEAD"],
+      handler: () => onAdminDocsFeedbackGet({ request, env })
+    };
+  }
+
+  const docsFeedback = url.pathname.match(
+    /^\/api\/admin\/docs-feedback\/([^/]+)$/
+  );
+  if (docsFeedback) {
+    return {
+      allowedMethods: ["PATCH"],
+      handler: () =>
+        onAdminDocsFeedbackPatch({
+          request,
+          env,
+          params: {
+            id: docsFeedback[1]
+          }
+        })
+    };
+  }
+
+  const pricingPlan = url.pathname.match(
+    /^\/api\/admin\/pricing-plans\/([^/]+)$/
+  );
+  if (pricingPlan) {
+    return {
+      allowedMethods: ["PATCH"],
+      handler: () =>
+        onAdminPricingPlanPatch({
+          request,
+          env,
+          params: {
+            id: pricingPlan[1]
+          }
+        })
+    };
+  }
+
   const featureFlag = url.pathname.match(
     /^\/api\/admin\/feature-flags\/([^/]+)$/
   );
@@ -243,6 +303,30 @@ function matchApiRoute(
     return {
       allowedMethods: ["POST"],
       handler: () => onQueryDryRunPost({ request, env })
+    };
+  }
+
+  if (url.pathname === "/api/pricing") {
+    return {
+      allowedMethods: ["GET", "HEAD"],
+      handler: () => onPricingGet({ request, env })
+    };
+  }
+
+  if (url.pathname === "/api/billing/checkout") {
+    return {
+      allowedMethods: ["POST"],
+      handler: () => onBillingCheckoutPost({ request, env })
+    };
+  }
+
+  if (url.pathname === "/api/docs/feedback") {
+    return {
+      allowedMethods: ["GET", "POST"],
+      handler: () =>
+        request.method === "POST"
+          ? onDocsFeedbackPost({ request, env })
+          : onDocsFeedbackGet({ request, env })
     };
   }
 

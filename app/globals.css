@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -6,6 +8,9 @@
   color-scheme: dark;
   --background: #070a12;
   --foreground: #f8fbff;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono",
+    Menlo, Courier, monospace;
 }
 
 * {
@@ -45,7 +50,7 @@ input {
 
 .sql-code {
   font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    var(--font-mono);
   font-size: 13px;
   line-height: 1.7;
 }
