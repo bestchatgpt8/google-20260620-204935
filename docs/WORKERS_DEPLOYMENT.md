@@ -10,6 +10,9 @@ a parallel Workers version for validation.
 - Worker entry: `worker/index.ts`
 - D1 binding: `GOOGLESQL_DB`
 - D1 database: `googlesql`
+- Custom domains in `wrangler.worker.jsonc`:
+  - `googlesql.com`
+  - `www.googlesql.com`
 
 ## Deploy
 
@@ -32,6 +35,10 @@ GITHUB_CLIENT_SECRET
 
 The Worker should be validated on `*.workers.dev` before any `googlesql.com`
 route is moved away from the Pages deployment.
+
+`googlesql.com` is now served by the Worker, so keep the custom-domain routes
+in `wrangler.worker.jsonc`. Removing them can make a later deploy drift away
+from the currently active Cloudflare route configuration.
 
 ## Phase 3B BigQuery Dry Run
 

@@ -3,6 +3,7 @@ import {
   requireAdminSession
 } from "../../../../lib/auth-request";
 import {
+  getQueryRunDetail,
   updateRunReviewStatus,
   type AdminStorageEnv
 } from "../../../../lib/admin-store";
@@ -20,6 +21,42 @@ type RunReviewContext = {
 type RunReviewBody = {
   status?: unknown;
 };
+
+export async function onRequestGet(context: RunReviewContext) {
+  const auth = await requireAdminSession(context.request, context.env);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
+  const id = context.params.id?.trim();
+  if (!id) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: "run_review_id_required",
+        message: "Run review id is required."
+      },
+      { status: 400 }
+    );
+  }
+
+  const result = await getQueryRunDetail(context.env, id);
+  if (!result.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: result.code,
+        message: result.message
+      },
+      { status: result.status }
+    );
+  }
+
+  return jsonResponse({
+    ok: true,
+    run: result.value
+  });
+}
 
 export async function onRequestPatch(context: RunReviewContext) {
   const auth = await requireAdminSession(context.request, context.env);

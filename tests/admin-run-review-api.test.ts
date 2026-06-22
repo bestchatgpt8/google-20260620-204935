@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { onRequestPatch } from "../functions/api/admin/run-reviews/[id]";
+import {
+  onRequestGet,
+  onRequestPatch
+} from "../functions/api/admin/run-reviews/[id]";
 import {
   createSessionCookie,
   signAuthPayload,
@@ -9,12 +12,26 @@ import {
 const secret = "test-secret-that-is-long-enough-for-hmac";
 
 describe("admin run review API", () => {
-  it("requires an admin session", async () => {
+  it("requires an admin session for updates", async () => {
     const response = await onRequestPatch({
       request: new Request("https://googlesql.com/api/admin/run-reviews/run-1", {
         method: "PATCH",
         body: JSON.stringify({ status: "approved" })
       }),
+      env: {
+        AUTH_COOKIE_SECRET: secret
+      },
+      params: {
+        id: "run-1"
+      }
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("requires an admin session for detail reads", async () => {
+    const response = await onRequestGet({
+      request: new Request("https://googlesql.com/api/admin/run-reviews/run-1"),
       env: {
         AUTH_COOKIE_SECRET: secret
       },
@@ -59,9 +76,29 @@ describe("admin run review API", () => {
       code: "storage_not_configured"
     });
   });
+
+  it("returns storage_not_configured for detail reads without D1", async () => {
+    const response = await onRequestGet({
+      request: await createAdminRequest({}, "GET"),
+      env: {
+        AUTH_COOKIE_SECRET: secret
+      },
+      params: {
+        id: "run-1"
+      }
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "storage_not_configured"
+    });
+  });
 });
 
-async function createAdminRequest(body: Record<string, unknown>) {
+async function createAdminRequest(
+  body: Record<string, unknown>,
+  method = "PATCH"
+) {
   const cookie = await createCookie({
     provider: "google",
     providerId: "123",
@@ -72,11 +109,11 @@ async function createAdminRequest(body: Record<string, unknown>) {
   });
 
   return new Request("https://googlesql.com/api/admin/run-reviews/run-1", {
-    method: "PATCH",
+    method,
     headers: {
       Cookie: cookie
     },
-    body: JSON.stringify(body)
+    body: method === "GET" ? undefined : JSON.stringify(body)
   });
 }
 

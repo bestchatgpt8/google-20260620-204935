@@ -20,7 +20,10 @@ import {
 import { onRequestGet as onAuthSessionGet } from "../functions/api/auth/session";
 import { onRequestGet as onAdminStateGet } from "../functions/api/admin/state";
 import { onRequestPatch as onAdminFeatureFlagPatch } from "../functions/api/admin/feature-flags/[id]";
-import { onRequestPatch as onAdminRunReviewPatch } from "../functions/api/admin/run-reviews/[id]";
+import {
+  onRequestGet as onAdminRunReviewGet,
+  onRequestPatch as onAdminRunReviewPatch
+} from "../functions/api/admin/run-reviews/[id]";
 import { onRequestPost as onAdminRollbackPost } from "../functions/api/admin/rollback";
 import { onRequestPost as onQueryDryRunPost } from "../functions/api/query/dry-run";
 
@@ -94,7 +97,11 @@ async function handleRequest(
   }
 
   context.waitUntil(Promise.resolve());
-  return serveStaticAsset(request, env);
+  const assetResponse = await serveStaticAsset(request, env);
+
+  return isAdminPageRequest(url.pathname)
+    ? withPrivateCacheHeaders(assetResponse)
+    : assetResponse;
 }
 
 function matchApiRoute(
@@ -187,15 +194,23 @@ function matchApiRoute(
   );
   if (runReview) {
     return {
-      allowedMethods: ["PATCH"],
+      allowedMethods: ["GET", "PATCH"],
       handler: () =>
-        onAdminRunReviewPatch({
-          request,
-          env,
-          params: {
-            id: runReview[1]
-          }
-        })
+        request.method === "GET"
+          ? onAdminRunReviewGet({
+              request,
+              env,
+              params: {
+                id: runReview[1]
+              }
+            })
+          : onAdminRunReviewPatch({
+              request,
+              env,
+              params: {
+                id: runReview[1]
+              }
+            })
     };
   }
 
@@ -327,6 +342,17 @@ function withSecurityHeaders(response: Response) {
   const headers = new Headers(response.headers);
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.set("X-Content-Type-Options", "nosniff");
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
+function withPrivateCacheHeaders(response: Response) {
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", "private, no-store, max-age=0");
 
   return new Response(response.body, {
     status: response.status,
