@@ -4,6 +4,7 @@ import {
   getAdminDb,
   queueRollback,
   recordQueryDryRun,
+  updateSchemaFieldPolicy,
   updateRunReviewStatus,
   updateFeatureRollout
 } from "../lib/admin-store";
@@ -13,12 +14,14 @@ describe("phase 3 admin store", () => {
   it("returns seed preview state when D1 is not bound", async () => {
     const state = await getAdminState({});
 
-    expect(state.phase).toBe("phase-3");
+    expect(state.phase).toBe("phase-4");
     expect(state.storage.configured).toBe(false);
     expect(state.storage.mode).toBe("seed");
     expect(state.bigQuery.configured).toBe(false);
     expect(state.bigQuery.mode).toBe("simulated");
     expect(state.featureFlags.some((flag) => flag.id === "bigquery-run-gate"))
+      .toBe(true);
+    expect(state.schemaCatalog.some((table) => table.name === "analytics.orders"))
       .toBe(true);
   });
 
@@ -94,6 +97,22 @@ describe("phase 3 admin store", () => {
       {},
       "run-1026",
       "approved",
+      "owner@example.com"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "storage_not_configured"
+    });
+  });
+
+  it("rejects schema policy mutations without D1 persistence", async () => {
+    const result = await updateSchemaFieldPolicy(
+      {},
+      "table-analytics-orders-customer-id",
+      {
+        queryable: true
+      },
       "owner@example.com"
     );
 

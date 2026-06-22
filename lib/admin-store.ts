@@ -4,6 +4,11 @@ import {
   hasBigQueryCredentials,
   type BigQueryEnv
 } from "./bigquery";
+import {
+  schemaTables,
+  type SchemaField,
+  type SchemaTable
+} from "./content";
 import type { D1Database } from "./d1";
 import {
   estimateDryRun,
@@ -39,7 +44,7 @@ export type AuditEvent = {
 };
 
 export type AdminState = {
-  phase: "phase-3";
+  phase: "phase-4";
   generatedAt: string;
   storage: {
     configured: boolean;
@@ -52,6 +57,7 @@ export type AdminState = {
   featureFlags: Phase2FeatureFlag[];
   reviewQueue: ReviewQueueItem[];
   workspaceAllowlist: WorkspaceAccess[];
+  schemaCatalog: SchemaCatalogTable[];
   auditEvents: AuditEvent[];
 };
 
@@ -79,6 +85,28 @@ export type QueryRunDetail = {
   error: QueryRunPreview["error"] | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type SchemaCatalogField = {
+  id: string;
+  name: string;
+  type: string;
+  mode: "NULLABLE" | "REQUIRED";
+  description: string;
+  pii: boolean;
+  queryable: boolean;
+  usedInExamples: boolean;
+  updatedAt: string;
+};
+
+export type SchemaCatalogTable = {
+  id: string;
+  workspace: string;
+  name: string;
+  description: string;
+  rowCount: number;
+  updatedAt: string;
+  fields: SchemaCatalogField[];
 };
 
 export type UserUpsertResult = {
@@ -155,11 +183,33 @@ type QueryRunRow = {
   updated_at: string;
 };
 
+type SchemaTableRow = {
+  id: string;
+  workspace: string;
+  table_name: string;
+  description: string;
+  row_count: number;
+  updated_at: string;
+};
+
+type SchemaFieldRow = {
+  id: string;
+  table_id: string;
+  field_name: string;
+  field_type: string;
+  mode: "NULLABLE" | "REQUIRED";
+  description: string;
+  pii: number;
+  queryable: number;
+  used_in_examples: number;
+  updated_at: string;
+};
+
 const fallbackAuditEvents: AuditEvent[] = [
   {
-    id: "seed-phase3",
+    id: "seed-phase4",
     actorEmail: "system@googlesql.com",
-    action: "phase3.seed_state",
+    action: "phase4.seed_state",
     target: "admin-console",
     metadata: {
       reason: "D1 binding is not configured"
@@ -167,6 +217,19 @@ const fallbackAuditEvents: AuditEvent[] = [
     createdAt: "2026-06-20T00:00:00.000Z"
   }
 ];
+
+const exampleSchemaFields = new Set([
+  "order_id",
+  "order_date",
+  "acquisition_channel",
+  "revenue",
+  "status",
+  "created_at",
+  "plan",
+  "country",
+  "event_time",
+  "event_name"
+]);
 
 export function getAdminDb(env: AdminStorageEnv) {
   if (env.GOOGLESQL_DB) {
@@ -193,15 +256,22 @@ export async function getAdminState(env: AdminRuntimeEnv): Promise<AdminState> {
   }
 
   await ensureAdminSchema(configured.db);
-  const [featureFlags, workspaces, runs, auditEvents] = await Promise.all([
+  const [
+    featureFlags,
+    workspaces,
+    runs,
+    schemaCatalog,
+    auditEvents
+  ] = await Promise.all([
     listFeatureFlags(configured.db),
     listWorkspaces(configured.db),
     listReviewQueue(configured.db),
+    listSchemaCatalog(configured.db),
     listAuditEvents(configured.db)
   ]);
 
   return {
-    phase: "phase-3",
+    phase: "phase-4",
     generatedAt: new Date().toISOString(),
     storage: {
       configured: true,
@@ -214,6 +284,7 @@ export async function getAdminState(env: AdminRuntimeEnv): Promise<AdminState> {
     featureFlags,
     reviewQueue: runs,
     workspaceAllowlist: workspaces,
+    schemaCatalog,
     auditEvents
   };
 }
@@ -505,6 +576,84 @@ export async function updateRunReviewStatus(
   };
 }
 
+export async function updateSchemaFieldPolicy(
+  env: AdminStorageEnv,
+  id: string,
+  input: {
+    queryable?: boolean;
+    pii?: boolean;
+  },
+  actorEmail: string
+): Promise<StoreMutationResult<SchemaCatalogField>> {
+  const patch = {
+    queryable:
+      typeof input.queryable === "boolean" ? input.queryable : undefined,
+    pii: typeof input.pii === "boolean" ? input.pii : undefined
+  };
+
+  if (patch.queryable === undefined && patch.pii === undefined) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_schema_field_policy",
+      message: "Provide a queryable or pii boolean policy update."
+    };
+  }
+
+  const configured = getAdminDb(env);
+  if (!configured) {
+    return storageNotConfigured();
+  }
+
+  await ensureAdminSchema(configured.db);
+  const existing = await getSchemaField(configured.db, id);
+  if (!existing) {
+    return {
+      ok: false,
+      status: 404,
+      code: "schema_field_not_found",
+      message: "Schema field policy was not found."
+    };
+  }
+
+  const updated = {
+    ...existing,
+    queryable: patch.queryable ?? existing.queryable,
+    pii: patch.pii ?? existing.pii,
+    updatedAt: new Date().toISOString()
+  } satisfies SchemaCatalogField;
+
+  await configured.db
+    .prepare(
+      `UPDATE schema_fields
+      SET queryable = ?, pii = ?, updated_at = ?
+      WHERE id = ?`
+    )
+    .bind(
+      updated.queryable ? 1 : 0,
+      updated.pii ? 1 : 0,
+      updated.updatedAt,
+      updated.id
+    )
+    .run();
+
+  await recordAuditEvent(env, {
+    actorEmail,
+    action: "schema_field.policy_updated",
+    target: id,
+    metadata: {
+      field: existing.name,
+      queryable: updated.queryable,
+      pii: updated.pii
+    }
+  });
+
+  return {
+    ok: true,
+    value: updated
+  };
+}
+
 export async function recordQueryDryRun(
   env: AdminStorageEnv,
   input: {
@@ -753,12 +902,44 @@ export async function ensureAdminSchema(db: D1Database) {
     )
     .run();
 
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS schema_tables (
+        id TEXT PRIMARY KEY,
+        workspace TEXT NOT NULL,
+        table_name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        row_count INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(workspace, table_name)
+      )`
+    )
+    .run();
+
+  await db
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS schema_fields (
+        id TEXT PRIMARY KEY,
+        table_id TEXT NOT NULL,
+        field_name TEXT NOT NULL,
+        field_type TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        description TEXT NOT NULL,
+        pii INTEGER NOT NULL,
+        queryable INTEGER NOT NULL,
+        used_in_examples INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(table_id, field_name)
+      )`
+    )
+    .run();
+
   await seedAdminDefaults(db);
 }
 
 function createFallbackAdminState(env: AdminRuntimeEnv): AdminState {
   return {
-    phase: "phase-3",
+    phase: "phase-4",
     generatedAt: new Date().toISOString(),
     storage: {
       configured: false,
@@ -772,6 +953,7 @@ function createFallbackAdminState(env: AdminRuntimeEnv): AdminState {
     featureFlags: phase2FeatureFlags,
     reviewQueue,
     workspaceAllowlist,
+    schemaCatalog: createSeedSchemaCatalog(),
     auditEvents: fallbackAuditEvents
   };
 }
@@ -845,6 +1027,67 @@ async function seedAdminDefaults(db: D1Database) {
           "2026-06-20T00:00:00.000Z"
         )
         .run()
+    )
+  );
+
+  const seedCatalog = createSeedSchemaCatalog();
+  await Promise.all(
+    seedCatalog.map((table) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO schema_tables (
+            id,
+            workspace,
+            table_name,
+            description,
+            row_count,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          table.id,
+          table.workspace,
+          table.name,
+          table.description,
+          table.rowCount,
+          table.updatedAt
+        )
+        .run()
+    )
+  );
+
+  await Promise.all(
+    seedCatalog.flatMap((table) =>
+      table.fields.map((field) =>
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO schema_fields (
+              id,
+              table_id,
+              field_name,
+              field_type,
+              mode,
+              description,
+              pii,
+              queryable,
+              used_in_examples,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            field.id,
+            table.id,
+            field.name,
+            field.type,
+            field.mode,
+            field.description,
+            field.pii ? 1 : 0,
+            field.queryable ? 1 : 0,
+            field.usedInExamples ? 1 : 0,
+            field.updatedAt
+          )
+          .run()
+      )
     )
   );
 
@@ -965,6 +1208,75 @@ async function listWorkspaces(db: D1Database) {
     plan: row.plan,
     runAccess: row.run_access
   }));
+}
+
+async function listSchemaCatalog(db: D1Database) {
+  const [tableResponse, fieldResponse] = await Promise.all([
+    db
+      .prepare(
+        `SELECT id, workspace, table_name, description, row_count, updated_at
+        FROM schema_tables
+        ORDER BY workspace, table_name`
+      )
+      .all<SchemaTableRow>(),
+    db
+      .prepare(
+        `SELECT
+          id,
+          table_id,
+          field_name,
+          field_type,
+          mode,
+          description,
+          pii,
+          queryable,
+          used_in_examples,
+          updated_at
+        FROM schema_fields
+        ORDER BY table_id, used_in_examples DESC, field_name`
+      )
+      .all<SchemaFieldRow>()
+  ]);
+
+  const fieldsByTable = new Map<string, SchemaCatalogField[]>();
+  for (const row of fieldResponse.results ?? []) {
+    const fields = fieldsByTable.get(row.table_id) ?? [];
+    fields.push(mapSchemaFieldRow(row));
+    fieldsByTable.set(row.table_id, fields);
+  }
+
+  return (tableResponse.results ?? []).map((row) => ({
+    id: row.id,
+    workspace: row.workspace,
+    name: row.table_name,
+    description: row.description,
+    rowCount: row.row_count,
+    updatedAt: row.updated_at,
+    fields: fieldsByTable.get(row.id) ?? []
+  }));
+}
+
+async function getSchemaField(db: D1Database, id: string) {
+  const row = await db
+    .prepare(
+      `SELECT
+        id,
+        table_id,
+        field_name,
+        field_type,
+        mode,
+        description,
+        pii,
+        queryable,
+        used_in_examples,
+        updated_at
+      FROM schema_fields
+      WHERE id = ?`
+    )
+    .bind(id)
+    .first<SchemaFieldRow>();
+
+  return row ? mapSchemaFieldRow(row) : null;
 }
 
 async function listReviewQueue(db: D1Database) {
@@ -1093,6 +1405,20 @@ async function listAuditEvents(db: D1Database) {
   }));
 }
 
+function mapSchemaFieldRow(row: SchemaFieldRow): SchemaCatalogField {
+  return {
+    id: row.id,
+    name: row.field_name,
+    type: row.field_type,
+    mode: row.mode,
+    description: row.description,
+    pii: row.pii === 1,
+    queryable: row.queryable === 1,
+    usedInExamples: row.used_in_examples === 1,
+    updatedAt: row.updated_at
+  };
+}
+
 function mapFeatureFlagRow(row: FeatureFlagRow): Phase2FeatureFlag {
   return {
     id: row.id,
@@ -1116,6 +1442,101 @@ function getFlagStatus(rollout: number): FeatureFlagStatus {
   }
 
   return "enabled";
+}
+
+function createSeedSchemaCatalog(): SchemaCatalogTable[] {
+  return schemaTables.map((table) => createSeedSchemaTable(table));
+}
+
+function createSeedSchemaTable(table: SchemaTable): SchemaCatalogTable {
+  const id = createSchemaTableId(table.name);
+  const workspace = table.name.split(".")[0] ?? "analytics";
+  const updatedAt = "2026-06-22T00:00:00.000Z";
+
+  return {
+    id,
+    workspace,
+    name: table.name,
+    description: getTableDescription(table.name),
+    rowCount: getSeedRowCount(table.name),
+    updatedAt,
+    fields: table.fields.map((field) =>
+      createSeedSchemaField(id, field, updatedAt)
+    )
+  };
+}
+
+function createSeedSchemaField(
+  tableId: string,
+  field: SchemaField,
+  updatedAt: string
+): SchemaCatalogField {
+  const pii = isSensitiveField(field.name);
+
+  return {
+    id: `${tableId}-${slugify(field.name)}`,
+    name: field.name,
+    type: field.type,
+    mode: field.key ? "REQUIRED" : "NULLABLE",
+    description: getFieldDescription(field),
+    pii,
+    queryable: !pii,
+    usedInExamples: isExampleField(field.name),
+    updatedAt
+  };
+}
+
+function createSchemaTableId(tableName: string) {
+  return `table-${slugify(tableName)}`;
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function getTableDescription(tableName: string) {
+  if (tableName === "analytics.orders") {
+    return "Order facts for revenue, channel, and status analysis.";
+  }
+
+  if (tableName === "analytics.customers") {
+    return "Customer profile dimensions used for cohort and plan reporting.";
+  }
+
+  if (tableName === "analytics.events") {
+    return "Product event stream for funnel, session, and behavior queries.";
+  }
+
+  return "GoogleSQL schema table managed by the admin catalog.";
+}
+
+function getSeedRowCount(tableName: string) {
+  const rowCounts: Record<string, number> = {
+    "analytics.orders": 8420000,
+    "analytics.customers": 1240000,
+    "analytics.events": 178000000
+  };
+
+  return rowCounts[tableName] ?? 0;
+}
+
+function getFieldDescription(field: SchemaField) {
+  if (field.key) {
+    return "Primary join key for this table.";
+  }
+
+  const label = field.name.replace(/_/g, " ");
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)} column.`;
+}
+
+function isSensitiveField(fieldName: string) {
+  return /\b(email|phone|address|ssn|ip|user_id|customer_id|session_id)\b/i.test(
+    fieldName
+  );
+}
+
+function isExampleField(fieldName: string) {
+  return exampleSchemaFields.has(fieldName);
 }
 
 function storageNotConfigured(): StoreMutationResult<never> {

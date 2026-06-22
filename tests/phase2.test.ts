@@ -3,6 +3,7 @@ import {
   estimateDryRun,
   getPhase2Health,
   getPhase3Health,
+  getPhase4Health,
   phase2FeatureFlags,
   releaseTracks
 } from "../lib/phase2";
@@ -53,6 +54,15 @@ describe("phase 2 release controls", () => {
     expect(health.checks).toContain("admin-route-hardening");
     expect(health.checks).toContain("run-review-detail");
     expect(health.checks).toContain("bigquery-config-status");
+  });
+
+  it("adds phase 4 schema catalog checks to health data", () => {
+    const health = getPhase4Health();
+
+    expect(health.phase).toBe("phase-4");
+    expect(health.checks).toContain("schema-catalog");
+    expect(health.checks).toContain("schema-field-policy");
+    expect(health.checks).toContain("workspace-schema-admin");
   });
 
   it("ships canary and rollback controls as configured data", () => {
