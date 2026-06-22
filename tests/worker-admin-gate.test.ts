@@ -21,6 +21,7 @@ describe("worker admin gate", () => {
       );
 
       expect(response.status).toBe(302);
+      expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.get("location")).toContain(
         "/login?returnTo=%2Fadmin"
       );

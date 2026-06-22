@@ -323,7 +323,13 @@ function redirectToLogin(requestUrl: URL, error: string) {
   loginUrl.searchParams.set("returnTo", "/admin");
   loginUrl.searchParams.set("error", error);
 
-  return Response.redirect(loginUrl, 302);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      "Cache-Control": "no-store",
+      Location: loginUrl.toString()
+    }
+  });
 }
 
 function methodNotAllowed(allowedMethods: string[]) {
