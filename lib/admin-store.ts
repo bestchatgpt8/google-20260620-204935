@@ -1,7 +1,12 @@
 import type { AuthProvider, AuthSession } from "./auth";
 import { getSessionRole, type AuthRole } from "./auth";
+import {
+  hasBigQueryCredentials,
+  type BigQueryEnv
+} from "./bigquery";
 import type { D1Database } from "./d1";
 import {
+  estimateDryRun,
   phase2FeatureFlags,
   releaseTracks,
   reviewQueue,
@@ -19,6 +24,8 @@ export type AdminStorageEnv = {
   GOOGLESQL_DB?: D1Database;
   DB?: D1Database;
 };
+
+export type AdminRuntimeEnv = AdminStorageEnv & BigQueryEnv;
 
 export type StorageMode = "d1" | "seed";
 
@@ -40,11 +47,38 @@ export type AdminState = {
     mode: StorageMode;
     message: string;
   };
+  bigQuery: BigQueryConfigState;
   releaseTracks: typeof releaseTracks;
   featureFlags: Phase2FeatureFlag[];
   reviewQueue: ReviewQueueItem[];
   workspaceAllowlist: WorkspaceAccess[];
   auditEvents: AuditEvent[];
+};
+
+export type BigQueryConfigState = {
+  configured: boolean;
+  mode: "live" | "simulated";
+  projectId: string | null;
+  location: string | null;
+  maxBytesBilled: number | null;
+  message: string;
+};
+
+export type QueryRunDetail = {
+  id: string;
+  workspace: string;
+  actorEmail: string | null;
+  sql: string;
+  status: QueryRunStatus;
+  mode: "live" | "simulated";
+  estimatedCostUsd: number;
+  scannedBytes: number;
+  expectedRuntimeMs: number;
+  referencedTables: string[];
+  checks: QueryRunPreview["checks"];
+  error: QueryRunPreview["error"] | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type UserUpsertResult = {
@@ -104,6 +138,23 @@ type AuditEventRow = {
   created_at: string;
 };
 
+type QueryRunRow = {
+  id: string;
+  workspace: string;
+  actor_email: string | null;
+  sql: string;
+  status: QueryRunStatus;
+  mode: "live" | "simulated";
+  estimated_cost_usd: number;
+  scanned_bytes: number;
+  expected_runtime_ms: number;
+  referenced_tables_json: string;
+  checks_json: string;
+  error_json: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 const fallbackAuditEvents: AuditEvent[] = [
   {
     id: "seed-phase3",
@@ -135,10 +186,10 @@ export function getAdminDb(env: AdminStorageEnv) {
   return null;
 }
 
-export async function getAdminState(env: AdminStorageEnv): Promise<AdminState> {
+export async function getAdminState(env: AdminRuntimeEnv): Promise<AdminState> {
   const configured = getAdminDb(env);
   if (!configured) {
-    return createFallbackAdminState();
+    return createFallbackAdminState(env);
   }
 
   await ensureAdminSchema(configured.db);
@@ -158,11 +209,60 @@ export async function getAdminState(env: AdminStorageEnv): Promise<AdminState> {
       mode: "d1",
       message: `Persisted in Cloudflare D1 binding ${configured.binding}.`
     },
+    bigQuery: getBigQueryConfigState(env),
     releaseTracks,
     featureFlags,
     reviewQueue: runs,
     workspaceAllowlist: workspaces,
     auditEvents
+  };
+}
+
+export async function getQueryRunDetail(
+  env: AdminStorageEnv,
+  id: string
+): Promise<StoreMutationResult<QueryRunDetail>> {
+  const configured = getAdminDb(env);
+  if (!configured) {
+    return storageNotConfigured();
+  }
+
+  await ensureAdminSchema(configured.db);
+  const row = await configured.db
+    .prepare(
+      `SELECT
+        id,
+        workspace,
+        actor_email,
+        sql,
+        status,
+        mode,
+        estimated_cost_usd,
+        scanned_bytes,
+        expected_runtime_ms,
+        referenced_tables_json,
+        checks_json,
+        error_json,
+        created_at,
+        updated_at
+      FROM query_runs
+      WHERE id = ?`
+    )
+    .bind(id)
+    .first<QueryRunRow>();
+
+  if (!row) {
+    return {
+      ok: false,
+      status: 404,
+      code: "query_run_not_found",
+      message: "Query run detail not found."
+    };
+  }
+
+  return {
+    ok: true,
+    value: mapQueryRunRow(row)
   };
 }
 
@@ -656,7 +756,7 @@ export async function ensureAdminSchema(db: D1Database) {
   await seedAdminDefaults(db);
 }
 
-function createFallbackAdminState(): AdminState {
+function createFallbackAdminState(env: AdminRuntimeEnv): AdminState {
   return {
     phase: "phase-3",
     generatedAt: new Date().toISOString(),
@@ -667,11 +767,31 @@ function createFallbackAdminState(): AdminState {
       message:
         "Cloudflare D1 binding GOOGLESQL_DB is not configured; showing seed data only."
     },
+    bigQuery: getBigQueryConfigState(env),
     releaseTracks,
     featureFlags: phase2FeatureFlags,
     reviewQueue,
     workspaceAllowlist,
     auditEvents: fallbackAuditEvents
+  };
+}
+
+function getBigQueryConfigState(env: BigQueryEnv): BigQueryConfigState {
+  const configured = hasBigQueryCredentials(env);
+  const maxBytesBilled = parsePositiveNumber(env.BIGQUERY_MAX_BYTES_BILLED);
+
+  return {
+    configured,
+    mode:
+      configured && env.BIGQUERY_DRY_RUN_MODE !== "simulated"
+        ? "live"
+        : "simulated",
+    projectId: env.BIGQUERY_PROJECT_ID ?? null,
+    location: env.BIGQUERY_LOCATION ?? null,
+    maxBytesBilled,
+    message: configured
+      ? "BigQuery service account credentials are configured for live dry-run."
+      : "BigQuery credentials are missing; dry-run uses simulated estimates."
   };
 }
 
@@ -753,6 +873,55 @@ async function seedAdminDefaults(db: D1Database) {
         )
         .run()
     )
+  );
+
+  await Promise.all(
+    reviewQueue.map((item) => {
+      const sql = getSeedRunSql(item.id);
+      const preview = estimateDryRun(sql);
+
+      return db
+        .prepare(
+          `INSERT OR IGNORE INTO query_runs (
+            id,
+            workspace,
+            actor_email,
+            sql,
+            status,
+            mode,
+            estimated_cost_usd,
+            scanned_bytes,
+            expected_runtime_ms,
+            referenced_tables_json,
+            checks_json,
+            error_json,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .bind(
+          item.id,
+          item.workspace,
+          "seed@googlesql.com",
+          sql,
+          item.status,
+          "simulated",
+          item.estimatedCostUsd,
+          item.scannedBytes,
+          preview.expectedRuntimeMs,
+          JSON.stringify(preview.referencedTables),
+          JSON.stringify(preview.checks),
+          item.status === "blocked"
+            ? JSON.stringify({
+                code: "seed_blocked",
+                message: "Seed query is blocked by the safety policy."
+              })
+            : null,
+          item.submittedAt,
+          item.submittedAt
+        )
+        .run();
+    })
   );
 }
 
@@ -841,6 +1010,69 @@ async function getRunReview(db: D1Database, id: string) {
     : null;
 }
 
+function mapQueryRunRow(row: QueryRunRow): QueryRunDetail {
+  return {
+    id: row.id,
+    workspace: row.workspace,
+    actorEmail: row.actor_email,
+    sql: row.sql,
+    status: row.status,
+    mode: row.mode,
+    estimatedCostUsd: row.estimated_cost_usd,
+    scannedBytes: row.scanned_bytes,
+    expectedRuntimeMs: row.expected_runtime_ms,
+    referencedTables: parseJsonArray<string>(row.referenced_tables_json),
+    checks: parseJsonArray<QueryRunPreview["checks"][number]>(row.checks_json),
+    error: parseJsonRecord(row.error_json),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function getSeedRunSql(id: string) {
+  if (id === "run-1026") {
+    return "SELECT campaign_id, session_id FROM `marketing.sessions`;";
+  }
+
+  if (id === "run-1025") {
+    return "DROP TABLE `sandbox.tmp_orders`;";
+  }
+
+  return `SELECT
+  DATE_TRUNC(order_date, WEEK) AS week_start,
+  acquisition_channel,
+  SUM(revenue) AS weekly_revenue,
+  COUNT(*) AS order_count
+FROM \`analytics.orders\`
+WHERE order_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 8 WEEK)
+GROUP BY week_start, acquisition_channel
+ORDER BY week_start DESC;`;
+}
+
+function parseJsonArray<T>(value: string): T[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonRecord(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed)
+      ? (parsed as QueryRunPreview["error"])
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function listAuditEvents(db: D1Database) {
   const response = await db
     .prepare(
@@ -920,6 +1152,15 @@ function parseMetadata(value: string) {
   } catch {
     return {};
   }
+}
+
+function parsePositiveNumber(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

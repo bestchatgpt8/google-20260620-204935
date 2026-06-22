@@ -3,9 +3,23 @@
   "name": "googlesql-worker-prod",
   "main": "worker/index.ts",
   "compatibility_date": "2026-06-21",
+  "routes": [
+    {
+      "pattern": "googlesql.com",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.googlesql.com",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": "./out",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*",
+      "/admin*"
+    ]
   },
   "d1_databases": [
     {

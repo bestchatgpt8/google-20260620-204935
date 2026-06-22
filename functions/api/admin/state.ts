@@ -4,13 +4,13 @@ import {
 } from "../../../lib/auth-request";
 import {
   getAdminState,
-  type AdminStorageEnv
+  type AdminRuntimeEnv
 } from "../../../lib/admin-store";
 import { getPublicSession, type AuthEnv } from "../../../lib/auth";
 
 type AdminStateContext = {
   request: Request;
-  env: AuthEnv & AdminStorageEnv;
+  env: AuthEnv & AdminRuntimeEnv;
 };
 
 export async function onRequestGet(context: AdminStateContext) {

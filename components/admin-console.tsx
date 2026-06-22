@@ -18,7 +18,7 @@ import {
   UsersRound,
   Zap
 } from "lucide-react";
-import type { AdminState } from "@/lib/admin-store";
+import type { AdminState, QueryRunDetail } from "@/lib/admin-store";
 import {
   formatBytes,
   formatCost,
@@ -56,6 +56,19 @@ type AdminLoadState =
     }
   | { status: "error"; message: string };
 
+type RunDetailState =
+  | { status: "idle" }
+  | { status: "loading"; id: string }
+  | { status: "ready"; run: QueryRunDetail }
+  | { status: "error"; id: string; message: string };
+
+type RunDetailResponse = {
+  ok?: boolean;
+  run?: QueryRunDetail;
+  code?: string;
+  message?: string;
+};
+
 export function AdminConsole() {
   const [loadState, setLoadState] = useState<AdminLoadState>({
     status: "loading"
@@ -68,6 +81,9 @@ export function AdminConsole() {
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingFlagId, setPendingFlagId] = useState<string | null>(null);
   const [pendingReviewId, setPendingReviewId] = useState<string | null>(null);
+  const [runDetail, setRunDetail] = useState<RunDetailState>({
+    status: "idle"
+  });
 
   const refreshAdminState = useCallback(async () => {
     try {
@@ -185,7 +201,9 @@ export function AdminConsole() {
 
       if (!response.ok) {
         if (isApiError(data) && data.code === "storage_not_configured") {
-          setNotice("D1 未绑定，本次 rollout 仅作为本地预览。");
+          setNotice(
+            "D1 is not bound; this rollout change remains a local preview."
+          );
           return;
         }
 
@@ -199,7 +217,7 @@ export function AdminConsole() {
       }
 
       replaceFeatureFlag(data.featureFlag);
-      setNotice("Rollout 已写入 D1，并记录到 audit log。");
+      setNotice("Rollout saved to D1 and recorded in the audit log.");
       void refreshAdminState();
     } catch (error) {
       setNotice(
@@ -223,7 +241,9 @@ export function AdminConsole() {
 
       if (!response.ok) {
         if (isApiError(data) && data.code === "storage_not_configured") {
-          setNotice("D1 未绑定，rollback 请求停留在本地 queued 状态。");
+          setNotice(
+            "D1 is not bound; rollback stays in local queued preview mode."
+          );
           return;
         }
 
@@ -232,7 +252,7 @@ export function AdminConsole() {
         );
       }
 
-      setNotice("Rollback 请求已写入 D1 audit log。");
+      setNotice("Rollback request saved to the D1 audit log.");
       void refreshAdminState();
     } catch (error) {
       setNotice(
@@ -267,6 +287,18 @@ export function AdminConsole() {
       }
 
       replaceRunReview(data.review);
+      setRunDetail((current) =>
+        current.status === "ready" && current.run.id === data.review.id
+          ? {
+              status: "ready",
+              run: {
+                ...current.run,
+                status: data.review.status,
+                updatedAt: data.review.submittedAt
+              }
+            }
+          : current
+      );
       setNotice(
         status === "approved"
           ? "Run review approved and recorded in the audit log."
@@ -279,6 +311,43 @@ export function AdminConsole() {
       );
     } finally {
       setPendingReviewId(null);
+    }
+  }
+
+  async function openRunDetail(id: string) {
+    setRunDetail({
+      status: "loading",
+      id
+    });
+
+    try {
+      const response = await fetch(`/api/admin/run-reviews/${id}`, {
+        credentials: "include",
+        cache: "no-store"
+      });
+      const data = (await response
+        .json()
+        .catch(() => null)) as RunDetailResponse | null;
+
+      if (!response.ok || !data?.run) {
+        throw new Error(
+          data?.message ?? "Run detail could not be loaded."
+        );
+      }
+
+      setRunDetail({
+        status: "ready",
+        run: data.run
+      });
+    } catch (error) {
+      setRunDetail({
+        status: "error",
+        id,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Run detail could not be loaded."
+      });
     }
   }
 
@@ -419,42 +488,93 @@ export function AdminConsole() {
             </div>
 
             <div className="border-b border-white/10 px-5 py-4">
-              <div
-                className={cn(
-                  "flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between",
-                  state.storage.configured
-                    ? "border-[#34a853]/20 bg-[#34a853]/[0.06]"
-                    : "border-[#fbbc05]/20 bg-[#fbbc05]/[0.06]"
-                )}
-              >
-                <div className="flex items-start gap-3">
-                  <Database
-                    className={cn(
-                      "mt-0.5 h-5 w-5",
-                      state.storage.configured
-                        ? "text-[#34a853]"
-                        : "text-[#fbbc05]"
-                    )}
-                  />
-                  <div>
-                    <p className="text-sm font-semibold text-slate-100">
-                      {state.storage.mode === "d1"
-                        ? `D1 ${state.storage.binding}`
-                        : "Seed preview mode"}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      {state.storage.message}
-                    </p>
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+                <div
+                  className={cn(
+                    "flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between",
+                    state.storage.configured
+                      ? "border-[#34a853]/20 bg-[#34a853]/[0.06]"
+                      : "border-[#fbbc05]/20 bg-[#fbbc05]/[0.06]"
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    <Database
+                      className={cn(
+                        "mt-0.5 h-5 w-5",
+                        state.storage.configured
+                          ? "text-[#34a853]"
+                          : "text-[#fbbc05]"
+                      )}
+                    />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">
+                        {state.storage.mode === "d1"
+                          ? `D1 ${state.storage.binding}`
+                          : "Seed preview mode"}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        {state.storage.message}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void refreshAdminState()}
+                    className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/[0.08]"
+                  >
+                    <RefreshCcw className="h-3.5 w-3.5" />
+                    Refresh
+                  </button>
+                </div>
+
+                <div
+                  className={cn(
+                    "rounded-lg border p-4",
+                    state.bigQuery.configured
+                      ? "border-[#4285f4]/20 bg-[#4285f4]/[0.07]"
+                      : "border-[#a855f7]/20 bg-[#a855f7]/[0.07]"
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    <Zap
+                      className={cn(
+                        "mt-0.5 h-5 w-5",
+                        state.bigQuery.configured
+                          ? "text-[#60a5fa]"
+                          : "text-[#d8b4fe]"
+                      )}
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-100">
+                        BigQuery{" "}
+                        {state.bigQuery.mode === "live"
+                          ? "live dry-run"
+                          : "simulated dry-run"}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        {state.bigQuery.message}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                    <ConfigMetric
+                      label="Project"
+                      value={state.bigQuery.projectId ?? "Not set"}
+                    />
+                    <ConfigMetric
+                      label="Location"
+                      value={state.bigQuery.location ?? "Default"}
+                    />
+                    <ConfigMetric
+                      label="Max bytes"
+                      value={
+                        state.bigQuery.maxBytesBilled === null
+                          ? "Not set"
+                          : formatBytes(state.bigQuery.maxBytesBilled)
+                      }
+                    />
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void refreshAdminState()}
-                  className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/[0.08]"
-                >
-                  <RefreshCcw className="h-3.5 w-3.5" />
-                  Refresh
-                </button>
               </div>
             </div>
 
@@ -636,8 +756,28 @@ export function AdminConsole() {
                     />
                     <TinyMetric label="Age" value={item.submittedAt} />
                   </div>
-                  {item.status === "needs_approval" ? (
-                    <div className="mt-4 grid grid-cols-2 gap-2">
+                  <div
+                    className={cn(
+                      "mt-4 grid gap-2",
+                      item.status === "needs_approval"
+                        ? "grid-cols-3"
+                        : "grid-cols-1"
+                    )}
+                  >
+                    <button
+                      type="button"
+                      disabled={
+                        runDetail.status === "loading" &&
+                        runDetail.id === item.id
+                      }
+                      onClick={() => void openRunDetail(item.id)}
+                      className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[#4285f4]/25 bg-[#4285f4]/10 px-3 text-xs font-semibold text-[#93c5fd] transition hover:bg-[#4285f4]/15 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      <Activity className="h-3.5 w-3.5" />
+                      Details
+                    </button>
+                    {item.status === "needs_approval" ? (
+                      <>
                       <button
                         type="button"
                         disabled={pendingReviewId === item.id}
@@ -660,12 +800,22 @@ export function AdminConsole() {
                         <AlertTriangle className="h-3.5 w-3.5" />
                         Block
                       </button>
-                    </div>
-                  ) : null}
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
           </section>
+
+          <RunDetailPanel
+            state={runDetail}
+            onClose={() =>
+              setRunDetail({
+                status: "idle"
+              })
+            }
+          />
 
           <section className="glass-panel overflow-hidden rounded-lg">
             <SectionHeader
@@ -855,6 +1005,180 @@ function TinyMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ConfigMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="min-w-0 rounded-lg border border-white/[0.08] bg-black/[0.16] px-3 py-2">
+      <span className="block text-[11px] text-slate-600">{label}</span>
+      <span className="mt-1 block break-words text-xs font-semibold text-slate-200">
+        {value}
+      </span>
+    </span>
+  );
+}
+
+function RunDetailPanel({
+  state,
+  onClose
+}: {
+  state: RunDetailState;
+  onClose: () => void;
+}) {
+  let body: ReactNode;
+  let action = "Select run";
+
+  if (state.status === "loading") {
+    action = state.id;
+    body = (
+      <div className="flex items-center gap-3 p-5 text-sm text-slate-500">
+        <RefreshCcw className="h-4 w-4 animate-spin text-[#60a5fa]" />
+        Loading run detail...
+      </div>
+    );
+  } else if (state.status === "error") {
+    action = state.id;
+    body = (
+      <div className="space-y-4 p-5">
+        <div className="rounded-lg border border-[#ea4335]/20 bg-[#ea4335]/[0.08] p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 text-[#f87171]" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-100">
+                Detail unavailable
+              </p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                {state.message}
+              </p>
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="focus-ring inline-flex h-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/[0.08]"
+        >
+          Close
+        </button>
+      </div>
+    );
+  } else if (state.status === "ready") {
+    const { run } = state;
+    action = run.mode === "live" ? "Live dry-run" : "Simulated";
+
+    body = (
+      <div className="space-y-4 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="sql-code break-all text-sm font-semibold text-slate-100">
+              {run.id}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {run.workspace} / {run.actorEmail ?? "anonymous"} /{" "}
+              {formatDateTime(run.updatedAt)}
+            </p>
+          </div>
+          <RunStatusPill status={run.status} />
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <TinyMetric label="Cost" value={formatCost(run.estimatedCostUsd)} />
+          <TinyMetric label="Scan" value={formatBytes(run.scannedBytes)} />
+          <TinyMetric label="Time" value={formatRuntime(run.expectedRuntimeMs)} />
+        </div>
+
+        <pre className="sql-code max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-white/[0.08] bg-black/[0.28] p-3 text-xs leading-6 text-slate-200">
+          {run.sql}
+        </pre>
+
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+            Referenced tables
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {run.referencedTables.length ? (
+              run.referencedTables.map((table) => (
+                <span
+                  key={table}
+                  className="sql-code rounded border border-[#4285f4]/20 bg-[#4285f4]/10 px-2 py-1 text-[11px] font-semibold text-[#93c5fd]"
+                >
+                  {table}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-slate-600">None detected</span>
+            )}
+          </div>
+        </div>
+
+        <div className="divide-y divide-white/[0.07] rounded-lg border border-white/[0.08] bg-black/[0.16]">
+          {run.checks.map((check) => {
+            const Icon = check.status === "pass" ? CheckCircle2 : AlertTriangle;
+
+            return (
+              <div key={check.label} className="flex items-start gap-3 p-3">
+                <Icon
+                  className={cn(
+                    "mt-0.5 h-4 w-4",
+                    check.status === "pass"
+                      ? "text-[#4ade80]"
+                      : "text-[#facc15]"
+                  )}
+                />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-100">
+                    {check.label}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    {check.detail}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {run.error ? (
+          <div className="rounded-lg border border-[#ea4335]/20 bg-[#ea4335]/[0.08] p-3">
+            <p className="text-xs font-semibold text-[#f87171]">
+              {run.error.code}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              {run.error.message}
+            </p>
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="focus-ring inline-flex h-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/[0.08]"
+        >
+          Close
+        </button>
+      </div>
+    );
+  } else {
+    body = (
+      <div className="p-5">
+        <div className="rounded-lg border border-white/[0.08] bg-black/[0.14] p-4">
+          <p className="text-sm font-semibold text-slate-100">
+            No run selected
+          </p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            Open a Run Review item to inspect its SQL and safety checks.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <section className="glass-panel overflow-hidden rounded-lg">
+      <SectionHeader icon={ShieldCheck} title="Run Detail" action={action} />
+      {body}
+    </section>
+  );
+}
+
 function StatusPill({ status }: { status: ReleaseStatus }) {
   const className = {
     healthy: "border-[#34a853]/25 bg-[#34a853]/10 text-[#4ade80]",
@@ -945,6 +1269,26 @@ function formatAuditTime(value: string) {
   }
 
   return value.slice(0, 16).replace("T", " ");
+}
+
+function formatDateTime(value: string) {
+  if (!value.includes("T")) {
+    return value;
+  }
+
+  return value.slice(0, 16).replace("T", " ");
+}
+
+function formatRuntime(value: number) {
+  if (value <= 0) {
+    return "0s";
+  }
+
+  if (value < 1000) {
+    return `${value}ms`;
+  }
+
+  return `${(value / 1000).toFixed(1)}s`;
 }
 
 function isAdminStateResponse(value: unknown): value is {

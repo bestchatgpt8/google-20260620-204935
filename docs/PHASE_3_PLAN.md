@@ -49,6 +49,22 @@ logging, and API-backed rollout controls.
 - Unauthenticated admin page loads now redirect to `/login` from the client
   even when a static shell is served from cache.
 
+## Phase 3D Scope
+
+- The Worker config now declares the `googlesql.com` and `www.googlesql.com`
+  custom-domain routes so Wrangler deploys match the production Worker routes.
+- Authenticated `/admin` static responses are returned with `private,
+  no-store` cache headers after the Worker admin gate succeeds.
+- Cloudflare static assets run the Worker first for `/admin*` and `/api/*` so
+  admin HTML and API routes cannot bypass the Worker gate.
+- `/api/admin/run-reviews/:id` supports `GET` for admin-only run detail reads,
+  including SQL text, mode, cost, scan bytes, referenced tables, safety checks,
+  and stored dry-run errors.
+- The admin console adds a run detail panel and a BigQuery dry-run
+  configuration status card.
+- Seeded review queue rows also seed matching `query_runs` detail rows so a new
+  D1 binding has inspectable review data before the first real dry-run.
+
 ## Deployment Setup
 
 Create the database and apply the schema:
@@ -87,6 +103,10 @@ read metadata/data for the datasets that GoogleSQL.com should validate.
 - D1-free preview deployments remain readable but cannot persist admin actions.
 - The public run gate returns live BigQuery dry-run data when credentials are
   configured and explicit simulated data when they are not.
+- `/api/admin/run-reviews/:id` returns detail data only for admin sessions and
+  reports `storage_not_configured` when D1 is missing.
+- The deployed Worker health response includes Phase 3D checks:
+  `admin-route-hardening`, `run-review-detail`, and `bigquery-config-status`.
 - `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build` pass
   before gray release.
 

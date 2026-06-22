@@ -16,8 +16,28 @@ describe("phase 3 admin store", () => {
     expect(state.phase).toBe("phase-3");
     expect(state.storage.configured).toBe(false);
     expect(state.storage.mode).toBe("seed");
+    expect(state.bigQuery.configured).toBe(false);
+    expect(state.bigQuery.mode).toBe("simulated");
     expect(state.featureFlags.some((flag) => flag.id === "bigquery-run-gate"))
       .toBe(true);
+  });
+
+  it("exposes live BigQuery dry-run configuration when credentials exist", async () => {
+    const state = await getAdminState({
+      BIGQUERY_PROJECT_ID: "analytics-prod",
+      BIGQUERY_CLIENT_EMAIL: "service@example.iam.gserviceaccount.com",
+      BIGQUERY_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----",
+      BIGQUERY_LOCATION: "US",
+      BIGQUERY_MAX_BYTES_BILLED: "1048576"
+    });
+
+    expect(state.bigQuery).toMatchObject({
+      configured: true,
+      mode: "live",
+      projectId: "analytics-prod",
+      location: "US",
+      maxBytesBilled: 1048576
+    });
   });
 
   it("detects the preferred D1 binding name", () => {

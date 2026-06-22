@@ -297,7 +297,10 @@ export function getPhase3Health() {
       "audit-log",
       "bigquery-dry-run",
       "query-run-audit",
-      "run-review-approval"
+      "run-review-approval",
+      "admin-route-hardening",
+      "run-review-detail",
+      "bigquery-config-status"
     ]
   };
 }
