@@ -305,6 +305,21 @@ export function getPhase3Health() {
   };
 }
 
+export function getPhase4Health() {
+  const phase3 = getPhase3Health();
+
+  return {
+    ...phase3,
+    phase: "phase-4",
+    checks: [
+      ...phase3.checks,
+      "schema-catalog",
+      "schema-field-policy",
+      "workspace-schema-admin"
+    ]
+  };
+}
+
 function extractReferencedTables(sql: string) {
   const tables = Array.from(
     sql.matchAll(/\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/gi),

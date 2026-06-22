@@ -69,6 +69,9 @@ type RunDetailResponse = {
   message?: string;
 };
 
+type SchemaCatalogField =
+  AdminState["schemaCatalog"][number]["fields"][number];
+
 export function AdminConsole() {
   const [loadState, setLoadState] = useState<AdminLoadState>({
     status: "loading"
@@ -81,6 +84,9 @@ export function AdminConsole() {
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingFlagId, setPendingFlagId] = useState<string | null>(null);
   const [pendingReviewId, setPendingReviewId] = useState<string | null>(null);
+  const [pendingSchemaFieldId, setPendingSchemaFieldId] = useState<
+    string | null
+  >(null);
   const [runDetail, setRunDetail] = useState<RunDetailState>({
     status: "idle"
   });
@@ -159,6 +165,17 @@ export function AdminConsole() {
   );
   const activeQueueCount =
     state?.reviewQueue.filter((item) => item.status !== "approved").length ?? 0;
+  const schemaFieldCount =
+    state?.schemaCatalog.reduce(
+      (count, table) => count + table.fields.length,
+      0
+    ) ?? 0;
+  const queryableFieldCount =
+    state?.schemaCatalog.reduce(
+      (count, table) =>
+        count + table.fields.filter((field) => field.queryable).length,
+      0
+    ) ?? 0;
 
   function previewRollout(id: string, rollout: number) {
     setLoadState((current) => {
@@ -314,6 +331,65 @@ export function AdminConsole() {
     }
   }
 
+  async function updateSchemaFieldPolicy(
+    field: SchemaCatalogField,
+    patch: Pick<Partial<SchemaCatalogField>, "queryable" | "pii">
+  ) {
+    const preview = {
+      ...field,
+      ...patch
+    };
+    setPendingSchemaFieldId(field.id);
+    setNotice(null);
+    replaceSchemaField(preview);
+
+    try {
+      const response = await fetch(`/api/admin/schema-fields/${field.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(patch)
+      });
+      const data = (await response.json().catch(() => null)) as unknown;
+
+      if (!response.ok) {
+        if (isApiError(data) && data.code === "storage_not_configured") {
+          setNotice(
+            "D1 is not bound; schema policy remains a local preview."
+          );
+          return;
+        }
+
+        throw new Error(
+          isApiError(data)
+            ? data.message
+            : "Schema field policy update failed."
+        );
+      }
+
+      if (!isSchemaFieldResponse(data)) {
+        throw new Error(
+          "Schema field policy update returned an unexpected response."
+        );
+      }
+
+      replaceSchemaField(data.schemaField);
+      setNotice("Schema field policy saved to D1 and recorded in the audit log.");
+      void refreshAdminState();
+    } catch (error) {
+      replaceSchemaField(field);
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Schema field policy update failed."
+      );
+    } finally {
+      setPendingSchemaFieldId(null);
+    }
+  }
+
   async function openRunDetail(id: string) {
     setRunDetail({
       status: "loading",
@@ -382,6 +458,27 @@ export function AdminConsole() {
           reviewQueue: current.state.reviewQueue.map((item) =>
             item.id === review.id ? review : item
           )
+        }
+      };
+    });
+  }
+
+  function replaceSchemaField(field: SchemaCatalogField) {
+    setLoadState((current) => {
+      if (current.status !== "ready") {
+        return current;
+      }
+
+      return {
+        ...current,
+        state: {
+          ...current.state,
+          schemaCatalog: current.state.schemaCatalog.map((table) => ({
+            ...table,
+            fields: table.fields.map((item) =>
+              item.id === field.id ? field : item
+            )
+          }))
         }
       };
     });
@@ -457,7 +554,7 @@ export function AdminConsole() {
                 <div className="flex items-center gap-3">
                   <ShieldCheck className="h-5 w-5 text-[#34a853]" />
                   <h1 className="text-lg font-semibold text-slate-50">
-                    Phase 3 Admin
+                    Phase 4 Admin
                   </h1>
                 </div>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
@@ -586,7 +683,7 @@ export function AdminConsole() {
               </div>
             ) : null}
 
-            <div className="grid gap-3 p-5 md:grid-cols-4">
+            <div className="grid gap-3 p-5 md:grid-cols-5">
               <SummaryMetric
                 icon={GitBranch}
                 label="Canary traffic"
@@ -604,6 +701,12 @@ export function AdminConsole() {
                 label="Review queue"
                 value={String(activeQueueCount)}
                 tone="yellow"
+              />
+              <SummaryMetric
+                icon={Database}
+                label="Queryable fields"
+                value={`${queryableFieldCount}/${schemaFieldCount}`}
+                tone="green"
               />
               <SummaryMetric
                 icon={RotateCcw}
@@ -814,6 +917,14 @@ export function AdminConsole() {
               setRunDetail({
                 status: "idle"
               })
+            }
+          />
+
+          <SchemaCatalogPanel
+            tables={state.schemaCatalog}
+            pendingFieldId={pendingSchemaFieldId}
+            onPolicyChange={(field, patch) =>
+              void updateSchemaFieldPolicy(field, patch)
             }
           />
 
@@ -1179,6 +1290,148 @@ function RunDetailPanel({
   );
 }
 
+function SchemaCatalogPanel({
+  tables,
+  pendingFieldId,
+  onPolicyChange
+}: {
+  tables: AdminState["schemaCatalog"];
+  pendingFieldId: string | null;
+  onPolicyChange: (
+    field: SchemaCatalogField,
+    patch: Pick<Partial<SchemaCatalogField>, "queryable" | "pii">
+  ) => void;
+}) {
+  return (
+    <section className="glass-panel overflow-hidden rounded-lg">
+      <SectionHeader
+        icon={Database}
+        title="Schema Catalog"
+        action={`${tables.length} tables`}
+      />
+      {tables.length ? (
+        <div className="divide-y divide-white/[0.07]">
+          {tables.map((table) => {
+            const piiCount = table.fields.filter((field) => field.pii).length;
+            const queryableCount = table.fields.filter(
+              (field) => field.queryable
+            ).length;
+
+            return (
+              <div key={table.id} className="px-5 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="sql-code break-all text-sm font-semibold text-slate-100">
+                      {table.name}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      {table.description}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded border border-[#4285f4]/20 bg-[#4285f4]/10 px-2 py-1 text-[11px] font-semibold text-[#93c5fd]">
+                    {table.workspace}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                  <TinyMetric
+                    label="Rows"
+                    value={formatCompactNumber(table.rowCount)}
+                  />
+                  <TinyMetric
+                    label="Queryable"
+                    value={`${queryableCount}/${table.fields.length}`}
+                  />
+                  <TinyMetric label="PII" value={String(piiCount)} />
+                </div>
+
+                <div className="mt-4 max-h-80 overflow-auto rounded-lg border border-white/[0.08] bg-black/[0.16]">
+                  <div className="divide-y divide-white/[0.07]">
+                    {table.fields.map((field) => {
+                      const isPending = pendingFieldId === field.id;
+
+                      return (
+                        <div
+                          key={field.id}
+                          className={cn(
+                            "grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_146px]",
+                            !field.queryable && "opacity-60"
+                          )}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="sql-code break-all text-xs font-semibold text-slate-100">
+                                {field.name}
+                              </p>
+                              <span className="rounded border border-white/[0.08] bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+                                {field.type}
+                              </span>
+                              {field.usedInExamples ? (
+                                <span className="rounded border border-[#4285f4]/20 bg-[#4285f4]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#93c5fd]">
+                                  used
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 text-[11px] leading-5 text-slate-600">
+                              {field.description}
+                            </p>
+                          </div>
+
+                          <div className="grid content-start gap-2">
+                            <label className="inline-flex h-8 items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.035] px-2 text-[11px] font-semibold text-slate-300 transition focus-within:border-[#4285f4]/40">
+                              <input
+                                type="checkbox"
+                                checked={field.queryable}
+                                disabled={isPending}
+                                onChange={(event) =>
+                                  onPolicyChange(field, {
+                                    queryable: event.currentTarget.checked
+                                  })
+                                }
+                                className="h-3.5 w-3.5 accent-[#4285f4]"
+                              />
+                              Queryable
+                            </label>
+                            <label className="inline-flex h-8 items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.035] px-2 text-[11px] font-semibold text-slate-300 transition focus-within:border-[#ea4335]/40">
+                              <input
+                                type="checkbox"
+                                checked={field.pii}
+                                disabled={isPending}
+                                onChange={(event) =>
+                                  onPolicyChange(field, {
+                                    pii: event.currentTarget.checked
+                                  })
+                                }
+                                className="h-3.5 w-3.5 accent-[#ea4335]"
+                              />
+                              PII
+                            </label>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="p-5">
+          <div className="rounded-lg border border-white/[0.08] bg-black/[0.14] p-4">
+            <p className="text-sm font-semibold text-slate-100">
+              No schema tables
+            </p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Bind Cloudflare D1 to persist schema catalog state.
+            </p>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function StatusPill({ status }: { status: ReleaseStatus }) {
   const className = {
     healthy: "border-[#34a853]/25 bg-[#34a853]/10 text-[#4ade80]",
@@ -1263,6 +1516,13 @@ function getFlagStatus(rollout: number): FeatureFlagStatus {
   return "enabled";
 }
 
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(value);
+}
+
 function formatAuditTime(value: string) {
   if (!value.includes("T")) {
     return value;
@@ -1315,6 +1575,18 @@ function isRunReviewResponse(value: unknown): value is {
   review: AdminState["reviewQueue"][number];
 } {
   return isRecord(value) && value.ok === true && isRecord(value.review);
+}
+
+function isSchemaFieldResponse(value: unknown): value is {
+  ok: true;
+  schemaField: SchemaCatalogField;
+} {
+  return (
+    isRecord(value) &&
+    value.ok === true &&
+    isRecord(value.schemaField) &&
+    typeof value.schemaField.id === "string"
+  );
 }
 
 function isAdminUser(value: unknown): value is AdminUser {

@@ -66,6 +66,30 @@ CREATE TABLE IF NOT EXISTS audit_events (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS schema_tables (
+  id TEXT PRIMARY KEY,
+  workspace TEXT NOT NULL,
+  table_name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  row_count INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(workspace, table_name)
+);
+
+CREATE TABLE IF NOT EXISTS schema_fields (
+  id TEXT PRIMARY KEY,
+  table_id TEXT NOT NULL,
+  field_name TEXT NOT NULL,
+  field_type TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  description TEXT NOT NULL,
+  pii INTEGER NOT NULL,
+  queryable INTEGER NOT NULL,
+  used_in_examples INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(table_id, field_name)
+);
+
 INSERT OR IGNORE INTO feature_flags
   (id, name, description, status, environment, rollout, owner, updated_at)
 VALUES
@@ -116,6 +140,52 @@ VALUES
   ('analytics', 'Data Team', 'Team', 'allowlisted', '2026-06-20T00:00:00.000Z'),
   ('marketing', 'Growth', 'Pro', 'review', '2026-06-20T00:00:00.000Z'),
   ('sandbox', 'Learning', 'Free', 'blocked', '2026-06-20T00:00:00.000Z');
+
+INSERT OR IGNORE INTO schema_tables
+  (id, workspace, table_name, description, row_count, updated_at)
+VALUES
+  (
+    'table-analytics-orders',
+    'analytics',
+    'analytics.orders',
+    'Order facts for revenue, channel, and status analysis.',
+    8420000,
+    '2026-06-22T00:00:00.000Z'
+  ),
+  (
+    'table-analytics-customers',
+    'analytics',
+    'analytics.customers',
+    'Customer profile dimensions used for cohort and plan reporting.',
+    1240000,
+    '2026-06-22T00:00:00.000Z'
+  ),
+  (
+    'table-analytics-events',
+    'analytics',
+    'analytics.events',
+    'Product event stream for funnel, session, and behavior queries.',
+    178000000,
+    '2026-06-22T00:00:00.000Z'
+  );
+
+INSERT OR IGNORE INTO schema_fields
+  (id, table_id, field_name, field_type, mode, description, pii, queryable, used_in_examples, updated_at)
+VALUES
+  ('table-analytics-orders-order-id', 'table-analytics-orders', 'order_id', 'INT64', 'REQUIRED', 'Primary join key for this table.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-orders-order-date', 'table-analytics-orders', 'order_date', 'DATE', 'NULLABLE', 'Order date column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-orders-acquisition-channel', 'table-analytics-orders', 'acquisition_channel', 'STRING', 'NULLABLE', 'Acquisition channel column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-orders-revenue', 'table-analytics-orders', 'revenue', 'FLOAT64', 'NULLABLE', 'Revenue column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-orders-status', 'table-analytics-orders', 'status', 'STRING', 'NULLABLE', 'Status column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-orders-customer-id', 'table-analytics-orders', 'customer_id', 'INT64', 'NULLABLE', 'Customer id column.', 1, 0, 0, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-customers-customer-id', 'table-analytics-customers', 'customer_id', 'INT64', 'REQUIRED', 'Primary join key for this table.', 1, 0, 0, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-customers-created-at', 'table-analytics-customers', 'created_at', 'TIMESTAMP', 'NULLABLE', 'Created at column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-customers-plan', 'table-analytics-customers', 'plan', 'STRING', 'NULLABLE', 'Plan column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-customers-country', 'table-analytics-customers', 'country', 'STRING', 'NULLABLE', 'Country column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-events-event-time', 'table-analytics-events', 'event_time', 'TIMESTAMP', 'NULLABLE', 'Event time column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-events-event-name', 'table-analytics-events', 'event_name', 'STRING', 'NULLABLE', 'Event name column.', 0, 1, 1, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-events-user-id', 'table-analytics-events', 'user_id', 'STRING', 'NULLABLE', 'User id column.', 1, 0, 0, '2026-06-22T00:00:00.000Z'),
+  ('table-analytics-events-session-id', 'table-analytics-events', 'session_id', 'STRING', 'NULLABLE', 'Session id column.', 1, 0, 0, '2026-06-22T00:00:00.000Z');
 
 INSERT OR IGNORE INTO run_reviews
   (id, workspace, query_type, status, estimated_cost_usd, scanned_bytes, submitted_at)

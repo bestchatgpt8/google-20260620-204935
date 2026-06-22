@@ -1,4 +1,4 @@
-import { getPhase3Health } from "../lib/phase2";
+import { getPhase4Health } from "../lib/phase2";
 import {
   getPublicSession,
   getSessionRole,
@@ -24,6 +24,7 @@ import {
   onRequestGet as onAdminRunReviewGet,
   onRequestPatch as onAdminRunReviewPatch
 } from "../functions/api/admin/run-reviews/[id]";
+import { onRequestPatch as onAdminSchemaFieldPatch } from "../functions/api/admin/schema-fields/[id]";
 import { onRequestPost as onAdminRollbackPost } from "../functions/api/admin/rollback";
 import { onRequestPost as onQueryDryRunPost } from "../functions/api/query/dry-run";
 
@@ -112,7 +113,7 @@ function matchApiRoute(
   if (url.pathname === "/api/health") {
     return {
       allowedMethods: ["GET", "HEAD"],
-      handler: () => Response.json(getPhase3Health())
+      handler: () => Response.json(getPhase4Health())
     };
   }
 
@@ -211,6 +212,23 @@ function matchApiRoute(
                 id: runReview[1]
               }
             })
+    };
+  }
+
+  const schemaField = url.pathname.match(
+    /^\/api\/admin\/schema-fields\/([^/]+)$/
+  );
+  if (schemaField) {
+    return {
+      allowedMethods: ["PATCH"],
+      handler: () =>
+        onAdminSchemaFieldPatch({
+          request,
+          env,
+          params: {
+            id: schemaField[1]
+          }
+        })
     };
   }
 
