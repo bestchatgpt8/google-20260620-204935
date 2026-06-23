@@ -330,7 +330,10 @@ export function getPhase4Health() {
       "information-schema-sync",
       "admin-user-management",
       "billing-config-status",
-      "admin-settings-console"
+      "admin-settings-console",
+      "stripe-webhook",
+      "subscription-ledger",
+      "billing-admin-ledger"
     ]
   };
 }

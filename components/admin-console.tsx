@@ -26,6 +26,11 @@ import type {
   AdminUserRecord,
   QueryRunDetail
 } from "@/lib/admin-store";
+import type {
+  BillingEventRecord,
+  BillingInvoiceRecord,
+  BillingSubscriptionRecord
+} from "@/lib/billing-store";
 import {
   type PricingInterval,
   type PricingPaymentMode,
@@ -88,6 +93,17 @@ type DocsFeedbackLoadState =
   | { status: "ready"; feedback: EditableDocsFeedback[]; persisted: boolean }
   | { status: "error"; message: string };
 
+type BillingLedgerLoadState =
+  | { status: "loading" }
+  | {
+      status: "ready";
+      subscriptions: BillingSubscriptionRecord[];
+      invoices: BillingInvoiceRecord[];
+      events: BillingEventRecord[];
+      persisted: boolean;
+    }
+  | { status: "error"; message: string };
+
 type EditablePricingPlan = Omit<PricingPlan, "priceCents" | "features"> & {
   priceInput: string;
   featuresText: string;
@@ -129,6 +145,15 @@ type PricingPlanResponse = {
 type DocsFeedbackAdminResponse = {
   ok?: boolean;
   feedback?: AdminDocsFeedback[] | AdminDocsFeedback;
+  persisted?: boolean;
+  message?: string;
+};
+
+type BillingLedgerResponse = {
+  ok?: boolean;
+  subscriptions?: BillingSubscriptionRecord[];
+  invoices?: BillingInvoiceRecord[];
+  events?: BillingEventRecord[];
   persisted?: boolean;
   message?: string;
 };
@@ -185,6 +210,10 @@ export function AdminConsole() {
   const [pendingPricingId, setPendingPricingId] = useState<string | null>(null);
   const [docsFeedbackLoadState, setDocsFeedbackLoadState] =
     useState<DocsFeedbackLoadState>({
+      status: "loading"
+    });
+  const [billingLedgerLoadState, setBillingLedgerLoadState] =
+    useState<BillingLedgerLoadState>({
       status: "loading"
     });
   const [pendingDocsFeedbackId, setPendingDocsFeedbackId] = useState<
@@ -302,6 +331,43 @@ export function AdminConsole() {
     }
   }, []);
 
+  const loadBillingLedger = useCallback(async () => {
+    try {
+      const response = await fetch("/api/admin/billing", {
+        cache: "no-store",
+        credentials: "include"
+      });
+      const data = (await response.json().catch(() => null)) as
+        | BillingLedgerResponse
+        | null;
+
+      if (
+        !response.ok ||
+        !Array.isArray(data?.subscriptions) ||
+        !Array.isArray(data.invoices) ||
+        !Array.isArray(data.events)
+      ) {
+        throw new Error(data?.message ?? "Billing ledger could not be loaded.");
+      }
+
+      setBillingLedgerLoadState({
+        status: "ready",
+        subscriptions: data.subscriptions,
+        invoices: data.invoices,
+        events: data.events,
+        persisted: data.persisted ?? false
+      });
+    } catch (error) {
+      setBillingLedgerLoadState({
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Billing ledger could not be loaded."
+      });
+    }
+  }, []);
+
   useEffect(() => {
     void refreshAdminState();
   }, [refreshAdminState]);
@@ -310,8 +376,9 @@ export function AdminConsole() {
     if (loadState.status === "ready") {
       void loadPricingPlans();
       void loadDocsFeedback();
+      void loadBillingLedger();
     }
-  }, [loadDocsFeedback, loadPricingPlans, loadState.status]);
+  }, [loadBillingLedger, loadDocsFeedback, loadPricingPlans, loadState.status]);
 
   useEffect(() => {
     if (
@@ -1289,6 +1356,11 @@ export function AdminConsole() {
             onSave={(plan) => void savePricingPlan(plan)}
             onRefresh={() => void loadPricingPlans()}
           />
+
+          <BillingLedgerPanel
+            state={billingLedgerLoadState}
+            onRefresh={() => void loadBillingLedger()}
+          />
         </div>
 
         <aside className="min-w-0 space-y-5">
@@ -1648,6 +1720,7 @@ function SystemSettingsPanel({ state }: { state: AdminState }) {
           message={state.billing.message}
           metrics={[
             ["Stripe", state.billing.stripeConfigured ? "Ready" : "Missing"],
+            ["Webhook", state.billing.webhookConfigured ? "Ready" : "Missing"],
             ["API", state.billing.apiVersion ?? "Default"],
             ["Site", state.billing.siteUrl ?? "Request origin"]
           ]}
@@ -1815,6 +1888,208 @@ function UserManagementPanel({
               with Google or GitHub while D1 is bound.
             </p>
           </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function BillingLedgerPanel({
+  state,
+  onRefresh
+}: {
+  state: BillingLedgerLoadState;
+  onRefresh: () => void;
+}) {
+  let body: ReactNode;
+  let action = "Loading";
+
+  if (state.status === "loading") {
+    body = (
+      <div className="flex items-center gap-3 p-5 text-sm text-slate-500">
+        <RefreshCcw className="h-4 w-4 animate-spin text-[#60a5fa]" />
+        Loading billing ledger...
+      </div>
+    );
+  } else if (state.status === "error") {
+    action = "Unavailable";
+    body = (
+      <div className="space-y-4 p-5">
+        <div className="rounded-lg border border-[#fbbc05]/20 bg-[#fbbc05]/[0.08] p-4">
+          <p className="text-sm font-semibold text-slate-100">
+            Billing ledger unavailable
+          </p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            {state.message}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="focus-ring inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/[0.08]"
+        >
+          <RefreshCcw className="h-3.5 w-3.5" />
+          Retry
+        </button>
+      </div>
+    );
+  } else {
+    action = state.persisted ? "Stripe ledger" : "D1 required";
+    body = (
+      <div className="divide-y divide-white/[0.07]">
+        {!state.persisted ? (
+          <div className="px-5 py-4">
+            <p className="rounded-lg border border-[#fbbc05]/20 bg-[#fbbc05]/[0.08] px-3 py-2 text-xs leading-5 text-[#fde68a]">
+              D1 is not bound; billing subscriptions and invoices will appear
+              after GOOGLESQL_DB and Stripe webhook delivery are configured.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 p-5 md:grid-cols-3">
+          <SummaryMetric
+            icon={CreditCard}
+            label="Subscriptions"
+            value={String(state.subscriptions.length)}
+            tone="blue"
+          />
+          <SummaryMetric
+            icon={CheckCircle2}
+            label="Paid invoices"
+            value={String(
+              state.invoices.filter((invoice) => invoice.status === "paid")
+                .length
+            )}
+            tone="green"
+          />
+          <SummaryMetric
+            icon={Activity}
+            label="Webhook events"
+            value={String(state.events.length)}
+            tone="purple"
+          />
+        </div>
+
+        <div className="px-5 pb-5">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-slate-100">
+              Subscriptions
+            </h3>
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="focus-ring inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 transition hover:bg-white/[0.08]"
+            >
+              <RefreshCcw className="h-3.5 w-3.5" />
+              Refresh
+            </button>
+          </div>
+          <div className="mt-3 divide-y divide-white/[0.07] overflow-hidden rounded-lg border border-white/[0.08] bg-black/[0.12]">
+            {state.subscriptions.length ? (
+              state.subscriptions.map((subscription) => (
+                <div
+                  key={subscription.id}
+                  className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_110px_130px]"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-100">
+                      {subscription.userEmail}
+                    </p>
+                    <p className="mt-1 truncate text-xs text-slate-500">
+                      {subscription.planName} / {subscription.stripeSubscriptionId ?? subscription.id}
+                    </p>
+                  </div>
+                  <RoleLikePill value={subscription.status} />
+                  <p className="text-xs leading-5 text-slate-500">
+                    Ends{" "}
+                    <span className="font-semibold text-slate-300">
+                      {subscription.currentPeriodEnd
+                        ? formatDateTime(subscription.currentPeriodEnd)
+                        : "unknown"}
+                    </span>
+                  </p>
+                </div>
+              ))
+            ) : (
+              <p className="px-4 py-5 text-xs leading-5 text-slate-500">
+                No Stripe subscriptions have been received yet.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-5 p-5 lg:grid-cols-2">
+          <BillingMiniList
+            title="Recent invoices"
+            empty="No invoices received yet."
+            items={state.invoices.slice(0, 5).map((invoice) => ({
+              id: invoice.id,
+              title: `${formatMoney(invoice.amountPaid, invoice.currency)} paid`,
+              subtitle: `${invoice.userEmail} / ${invoice.status}`,
+              meta: formatDateTime(invoice.updatedAt)
+            }))}
+          />
+          <BillingMiniList
+            title="Webhook events"
+            empty="No webhook events received yet."
+            items={state.events.slice(0, 5).map((event) => ({
+              id: event.id,
+              title: event.type,
+              subtitle: event.summary,
+              meta: formatDateTime(event.processedAt)
+            }))}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <section className="glass-panel overflow-hidden rounded-lg">
+      <SectionHeader icon={CreditCard} title="Billing Ledger" action={action} />
+      {body}
+    </section>
+  );
+}
+
+function BillingMiniList({
+  title,
+  empty,
+  items
+}: {
+  title: string;
+  empty: string;
+  items: Array<{
+    id: string;
+    title: string;
+    subtitle: string;
+    meta: string;
+  }>;
+}) {
+  return (
+    <section className="min-w-0">
+      <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+      <div className="mt-3 divide-y divide-white/[0.07] overflow-hidden rounded-lg border border-white/[0.08] bg-black/[0.12]">
+        {items.length ? (
+          items.map((item) => (
+            <div key={item.id} className="px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-100">
+                    {item.title}
+                  </p>
+                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                    {item.subtitle}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[11px] font-medium text-slate-600">
+                  {item.meta}
+                </span>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="px-4 py-5 text-xs leading-5 text-slate-500">{empty}</p>
         )}
       </div>
     </section>
@@ -2760,6 +3035,27 @@ function RolePill({ role }: { role: AdminUserRole }) {
   );
 }
 
+function RoleLikePill({ value }: { value: string }) {
+  const positive = value === "active" || value === "trialing" || value === "paid";
+  const warning = value === "past_due" || value === "incomplete";
+  const className = positive
+    ? "border-[#34a853]/25 bg-[#34a853]/10 text-[#4ade80]"
+    : warning
+      ? "border-[#fbbc05]/25 bg-[#fbbc05]/10 text-[#facc15]"
+      : "border-white/[0.08] bg-white/[0.04] text-slate-500";
+
+  return (
+    <span
+      className={cn(
+        "inline-flex h-7 items-center justify-center rounded px-2 text-[11px] font-semibold",
+        className
+      )}
+    >
+      {value.replace("_", " ")}
+    </span>
+  );
+}
+
 function getFlagStatus(rollout: number): FeatureFlagStatus {
   if (rollout === 0) {
     return "paused";
@@ -2865,6 +3161,18 @@ function formatPlanAmount(value: string, currency: string) {
     }).format(priceCents / 100);
   } catch {
     return `${currency || "USD"} ${(priceCents / 100).toFixed(2)}`;
+  }
+}
+
+function formatMoney(amountCents: number, currency: string) {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: amountCents % 100 === 0 ? 0 : 2
+    }).format(amountCents / 100);
+  } catch {
+    return `${currency || "USD"} ${(amountCents / 100).toFixed(2)}`;
   }
 }
 

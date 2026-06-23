@@ -83,6 +83,9 @@ describe("phase 2 release controls", () => {
     expect(health.checks).toContain("admin-user-management");
     expect(health.checks).toContain("billing-config-status");
     expect(health.checks).toContain("admin-settings-console");
+    expect(health.checks).toContain("stripe-webhook");
+    expect(health.checks).toContain("subscription-ledger");
+    expect(health.checks).toContain("billing-admin-ledger");
   });
 
   it("ships canary and rollback controls as configured data", () => {

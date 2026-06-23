@@ -36,6 +36,7 @@ describe("phase 3 admin store", () => {
       GOOGLE_CLIENT_SECRET: "google-secret",
       ADMIN_EMAILS: "owner@example.com, ops@example.com",
       STRIPE_SECRET_KEY: "sk_test_123",
+      STRIPE_WEBHOOK_SECRET: "whsec_123",
       STRIPE_API_VERSION: "2026-02-25.clover",
       SITE_URL: "https://googlesql.com"
     });
@@ -50,6 +51,7 @@ describe("phase 3 admin store", () => {
     expect(state.billing).toMatchObject({
       configured: true,
       stripeConfigured: true,
+      webhookConfigured: true,
       apiVersion: "2026-02-25.clover",
       siteUrl: "https://googlesql.com"
     });

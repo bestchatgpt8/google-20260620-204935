@@ -9,6 +9,7 @@ export type BillingEnv = PricingStorageEnv & {
   STRIPE_API_VERSION?: string;
   STRIPE_SUCCESS_URL?: string;
   STRIPE_CANCEL_URL?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
   SITE_URL?: string;
 };
 
@@ -31,7 +32,8 @@ const DEFAULT_STRIPE_API_VERSION = "2026-02-25.clover";
 export async function createCheckoutSession(
   env: BillingEnv,
   request: Request,
-  planId: string
+  planId: string,
+  options: { userEmail?: string } = {}
 ): Promise<CheckoutResult> {
   const plan = await getPricingPlan(env, planId);
   if (!plan || !plan.active) {
@@ -80,13 +82,14 @@ export async function createCheckoutSession(
     };
   }
 
-  return createStripeHostedCheckout(env, request, plan);
+  return createStripeHostedCheckout(env, request, plan, options);
 }
 
 async function createStripeHostedCheckout(
   env: BillingEnv,
   request: Request,
-  plan: PricingPlan
+  plan: PricingPlan,
+  options: { userEmail?: string }
 ): Promise<CheckoutResult> {
   const origin = getSiteOrigin(env, request);
   const params = new URLSearchParams({
@@ -102,7 +105,15 @@ async function createStripeHostedCheckout(
 
   params.set("metadata[plan_id]", plan.id);
   params.set("metadata[plan_name]", plan.name);
+  params.set("subscription_data[metadata][plan_id]", plan.id);
+  params.set("subscription_data[metadata][plan_name]", plan.name);
   params.set("line_items[0][quantity]", "1");
+
+  if (options.userEmail) {
+    params.set("customer_email", options.userEmail);
+    params.set("metadata[user_email]", options.userEmail);
+    params.set("subscription_data[metadata][user_email]", options.userEmail);
+  }
 
   if (plan.stripePriceId) {
     params.set("line_items[0][price]", plan.stripePriceId);

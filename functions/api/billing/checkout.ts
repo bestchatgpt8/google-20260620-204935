@@ -1,4 +1,8 @@
-import { jsonResponse } from "../../../lib/auth-request";
+import {
+  getSessionFromRequest,
+  jsonResponse
+} from "../../../lib/auth-request";
+import { type AuthEnv } from "../../../lib/auth";
 import {
   createCheckoutSession,
   type BillingEnv
@@ -6,7 +10,7 @@ import {
 
 type CheckoutContext = {
   request: Request;
-  env: BillingEnv;
+  env: BillingEnv & AuthEnv;
 };
 
 type CheckoutBody = {
@@ -38,11 +42,10 @@ export async function onRequestPost(context: CheckoutContext) {
     );
   }
 
-  const result = await createCheckoutSession(
-    context.env,
-    context.request,
-    planId
-  );
+  const session = await getSessionFromRequest(context.request, context.env);
+  const result = await createCheckoutSession(context.env, context.request, planId, {
+    userEmail: session?.email
+  });
 
   if (!result.ok) {
     return jsonResponse(

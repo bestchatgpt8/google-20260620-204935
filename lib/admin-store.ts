@@ -35,6 +35,7 @@ export type BillingConfigEnv = {
   STRIPE_API_VERSION?: string;
   STRIPE_SUCCESS_URL?: string;
   STRIPE_CANCEL_URL?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
   SITE_URL?: string;
 };
 
@@ -87,6 +88,7 @@ export type AuthConfigState = {
 export type BillingConfigState = {
   configured: boolean;
   stripeConfigured: boolean;
+  webhookConfigured: boolean;
   apiVersion: string | null;
   siteUrl: string | null;
   successUrl: string | null;
@@ -1309,17 +1311,20 @@ function getAuthConfigState(env: AuthEnv): AuthConfigState {
 
 function getBillingConfigState(env: BillingConfigEnv): BillingConfigState {
   const stripeConfigured = Boolean(env.STRIPE_SECRET_KEY);
+  const webhookConfigured = Boolean(env.STRIPE_WEBHOOK_SECRET);
 
   return {
-    configured: stripeConfigured,
+    configured: stripeConfigured && webhookConfigured,
     stripeConfigured,
+    webhookConfigured,
     apiVersion: env.STRIPE_API_VERSION ?? null,
     siteUrl: env.SITE_URL ?? null,
     successUrl: env.STRIPE_SUCCESS_URL ?? null,
     cancelUrl: env.STRIPE_CANCEL_URL ?? null,
-    message: stripeConfigured
-      ? "Stripe Checkout secret is configured. Paid plans can use hosted checkout when their Stripe price id or inline price is valid."
-      : "Stripe Checkout is not configured. Paid plans must use payment links or add STRIPE_SECRET_KEY."
+    message:
+      stripeConfigured && webhookConfigured
+        ? "Stripe Checkout and webhook signing secret are configured for subscription ledger sync."
+        : "Stripe needs both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET before subscriptions can be fully reconciled."
   };
 }
 

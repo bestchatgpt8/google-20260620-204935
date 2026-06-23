@@ -31,7 +31,9 @@ import {
   onRequestPost as onDocsFeedbackPost
 } from "../functions/api/docs/feedback";
 import { onRequestPost as onBillingCheckoutPost } from "../functions/api/billing/checkout";
+import { onRequestPost as onBillingWebhookPost } from "../functions/api/billing/webhook";
 import { onRequestGet as onPricingGet } from "../functions/api/pricing";
+import { onRequestGet as onAdminBillingGet } from "../functions/api/admin/billing";
 import { onRequestGet as onAdminPricingPlansGet } from "../functions/api/admin/pricing-plans";
 import { onRequestPatch as onAdminPricingPlanPatch } from "../functions/api/admin/pricing-plans/[id]";
 import { onRequestGet as onAdminDocsFeedbackGet } from "../functions/api/admin/docs-feedback";
@@ -207,6 +209,13 @@ function matchApiRoute(
     };
   }
 
+  if (url.pathname === "/api/admin/billing") {
+    return {
+      allowedMethods: ["GET", "HEAD"],
+      handler: () => onAdminBillingGet({ request, env })
+    };
+  }
+
   if (url.pathname === "/api/admin/docs-feedback") {
     return {
       allowedMethods: ["GET", "HEAD"],
@@ -347,6 +356,13 @@ function matchApiRoute(
     return {
       allowedMethods: ["POST"],
       handler: () => onBillingCheckoutPost({ request, env })
+    };
+  }
+
+  if (url.pathname === "/api/billing/webhook") {
+    return {
+      allowedMethods: ["POST"],
+      handler: () => onBillingWebhookPost({ request, env })
     };
   }
 

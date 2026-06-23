@@ -75,6 +75,20 @@ internals publicly.
   `admin-user-management`, `billing-config-status`, and
   `admin-settings-console`.
 
+## Phase 4E Billing Ledger Scope
+
+- `/api/billing/webhook` verifies Stripe webhook signatures with
+  `STRIPE_WEBHOOK_SECRET`.
+- Stripe Checkout Sessions attach signed-in user email and plan metadata so
+  subscription events can be mapped back to GoogleSQL users.
+- Cloudflare D1 stores billing subscriptions, invoices, and processed Stripe
+  event ids for idempotency.
+- `/api/admin/billing` exposes the D1 billing ledger to administrators only.
+- The admin console includes a Billing Ledger panel with subscription counts,
+  paid invoice counts, recent invoices, and recent webhook events.
+- Internal health metadata reports Phase 4E checks:
+  `stripe-webhook`, `subscription-ledger`, and `billing-admin-ledger`.
+
 ## Safety Model
 
 - The schema catalog API requires the same signed OAuth admin session as the
@@ -92,6 +106,9 @@ internals publicly.
   `/api/admin/*`, require D1 persistence, and are audited.
 - Public `/api/health` returns only the minimal service status. Detailed
   deployment and check metadata is available through admin-only routes.
+- Stripe webhook ingestion rejects missing or invalid signatures before reading
+  or mutating D1 billing state.
+- Stripe event ids are stored to prevent duplicate webhook replay mutations.
 
 ## Acceptance Criteria
 
@@ -113,10 +130,15 @@ internals publicly.
   whether login, Stripe Checkout, and account storage are configured.
 - `/api/admin/users/:id` rejects unauthenticated requests and returns
   `storage_not_configured` without D1 persistence.
+- `/api/billing/webhook` rejects invalid Stripe signatures and returns
+  `storage_not_configured` when D1 is unavailable.
+- `/api/admin/billing` rejects unauthenticated requests and returns an empty
+  preview ledger without D1 persistence.
 
 ## Remaining Phase 4 Candidate Scope
 
 - Add field-level masking or blocking rules for approved execution paths.
 - Add scheduled schema refresh cadence and import history.
-- Add full billing ledger management for subscriptions, invoices, refunds, and
-  Stripe webhooks.
+- Add Stripe Customer Portal for self-service cancellations and payment method
+  changes.
+- Add refunds and manual entitlement overrides in the admin billing panel.

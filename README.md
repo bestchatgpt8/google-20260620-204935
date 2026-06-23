@@ -19,6 +19,8 @@ workflows, pricing controls, and admin user management.
 - BigQuery `INFORMATION_SCHEMA` import for schema context
 - Admin user and billing configuration visibility
 - Pricing plan editing and hosted checkout/payment-link routing
+- Stripe webhook ingestion and D1 billing ledger
+- Admin billing dashboard for subscriptions, invoices, and webhook events
 - Health endpoint for deployment checks
 - CI pipeline for lint, typecheck, unit tests, and build
 
