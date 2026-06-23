@@ -289,6 +289,29 @@ export async function getAdminState(env: AdminRuntimeEnv): Promise<AdminState> {
   };
 }
 
+export async function getSchemaPolicyCatalog(env: AdminStorageEnv): Promise<{
+  tables: SchemaCatalogTable[];
+  source: StorageMode;
+  storageBinding: "GOOGLESQL_DB" | "DB" | null;
+}> {
+  const configured = getAdminDb(env);
+  if (!configured) {
+    return {
+      tables: createSeedSchemaCatalog(),
+      source: "seed",
+      storageBinding: null
+    };
+  }
+
+  await ensureAdminSchema(configured.db);
+
+  return {
+    tables: await listSchemaCatalog(configured.db),
+    source: "d1",
+    storageBinding: configured.binding
+  };
+}
+
 export async function getQueryRunDetail(
   env: AdminStorageEnv,
   id: string

@@ -315,18 +315,26 @@ export function getPhase4Health() {
       ...phase3.checks,
       "schema-catalog",
       "schema-field-policy",
-      "workspace-schema-admin"
+      "workspace-schema-admin",
+      "schema-policy-dry-run",
+      "workspace-table-allowlist",
+      "pii-dry-run-block"
     ]
   };
 }
 
 function extractReferencedTables(sql: string) {
+  const stripped = stripExtractExpressions(sql);
   const tables = Array.from(
-    sql.matchAll(/\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/gi),
+    stripped.matchAll(/\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/gi),
     (match) => match[1]
   );
 
   return Array.from(new Set(tables));
+}
+
+function stripExtractExpressions(sql: string) {
+  return sql.replace(/\bEXTRACT\s*\([^)]*\bFROM\b[^)]*\)/gi, " ");
 }
 
 function countProjectedColumns(sql: string) {

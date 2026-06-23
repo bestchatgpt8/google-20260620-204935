@@ -27,6 +27,21 @@ enabled in the Worker deployment.
 - `/api/health` now reports Phase 4 checks:
   `schema-catalog`, `schema-field-policy`, and `workspace-schema-admin`.
 
+## Phase 4B Runtime Policy Scope
+
+- `/api/query/dry-run` now loads the workspace schema catalog before BigQuery
+  dry-run.
+- D1-backed schema policy is used when `GOOGLESQL_DB` or `DB` is bound; seed
+  schema policy remains the fallback for preview deployments.
+- Workspace table allowlists block dry-runs that reference tables outside the
+  selected workspace.
+- Field policy blocks dry-runs that reference fields marked `queryable: false`.
+- Selected fields marked `pii: true` block dry-run approval before live BigQuery
+  dry-run can be requested.
+- `/api/health` reports Phase 4B runtime checks:
+  `schema-policy-dry-run`, `workspace-table-allowlist`, and
+  `pii-dry-run-block`.
+
 ## Safety Model
 
 - The schema catalog API requires the same signed OAuth admin session as the
@@ -35,10 +50,9 @@ enabled in the Worker deployment.
   mutations return `storage_not_configured`.
 - Seeded PII defaults are conservative for user, customer, and session
   identifiers.
-- Schema management is currently an admin control plane feature. Runtime query
-  validation still uses the existing static schema validator until Phase 4B
-  connects workspace-specific catalog policy into generation and dry-run
-  enforcement.
+- Runtime query validation keeps the existing static safety checks for
+  destructive operations and cost hints, then overlays Phase 4B catalog policy
+  for workspace table allowlists, field queryability, and PII exposure.
 
 ## Acceptance Criteria
 
@@ -49,11 +63,11 @@ enabled in the Worker deployment.
 - Schema policy PATCH requests with D1 update the field row and create an audit
   event.
 - The Worker health response includes the Phase 4 schema checks.
+- Policy-blocked dry-runs return `schema_policy_blocked` and do not request a
+  live BigQuery dry-run.
 
-## Phase 4B Candidate Scope
+## Remaining Phase 4 Candidate Scope
 
-- Connect D1 schema policy into query validation and dry-run enforcement.
-- Add workspace-specific table allowlists instead of a single global seed
-  catalog.
 - Add schema import/sync from BigQuery `INFORMATION_SCHEMA`.
 - Add field-level masking or blocking rules for approved execution paths.
+- Add admin controls for workspace-specific table imports and refresh cadence.

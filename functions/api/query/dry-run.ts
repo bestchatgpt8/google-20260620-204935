@@ -11,6 +11,11 @@ import {
   runBigQueryDryRun,
   type BigQueryEnv
 } from "../../../lib/bigquery";
+import { estimateDryRun } from "../../../lib/phase2";
+import {
+  applySchemaPolicyToDryRunPreview,
+  evaluateSchemaPolicy
+} from "../../../lib/schema-policy";
 
 type QueryDryRunContext = {
   request: Request;
@@ -64,7 +69,17 @@ export async function onRequestPost(context: QueryDryRunContext) {
   const workspace = getString(body.value.workspace) || inferWorkspace(sql);
   const queryType = getString(body.value.queryType) || "Generated Query";
   const session = await getSessionFromRequest(context.request, context.env);
-  const preview = await runBigQueryDryRun(sql, context.env);
+  const policyEvaluation = await evaluateSchemaPolicy(context.env, {
+    sql,
+    workspace
+  });
+  const basePreview = policyEvaluation.blocked
+    ? estimateDryRun(sql)
+    : await runBigQueryDryRun(sql, context.env);
+  const preview = applySchemaPolicyToDryRunPreview(
+    basePreview,
+    policyEvaluation
+  );
   const record = await recordQueryDryRun(context.env, {
     workspace,
     queryType,
@@ -124,7 +139,9 @@ async function readJsonBody(
 }
 
 function inferWorkspace(sql: string) {
-  const match = sql.match(/\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/i);
+  const match = stripExtractExpressions(sql).match(
+    /\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/i
+  );
   const tableName = match?.[1];
   if (!tableName) {
     return "analytics";
@@ -132,6 +149,10 @@ function inferWorkspace(sql: string) {
 
   const parts = tableName.split(".");
   return (parts.length > 1 ? parts.at(-2) : parts[0])?.toLowerCase() ?? "analytics";
+}
+
+function stripExtractExpressions(sql: string) {
+  return sql.replace(/\bEXTRACT\s*\([^)]*\bFROM\b[^)]*\)/gi, " ");
 }
 
 function getString(value: unknown) {

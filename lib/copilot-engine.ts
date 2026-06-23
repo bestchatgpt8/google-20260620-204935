@@ -249,12 +249,17 @@ function validatePiiExposure(sql: string): SafetyCheck {
 }
 
 function getReferencedTables(sql: string) {
+  const stripped = stripExtractExpressions(sql);
   const tables = Array.from(
-    sql.matchAll(/\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/gi),
+    stripped.matchAll(/\b(?:FROM|JOIN)\s+`?([\w.-]+)`?/gi),
     (match) => match[1]
   );
 
   return Array.from(new Set(tables));
+}
+
+function stripExtractExpressions(sql: string) {
+  return sql.replace(/\bEXTRACT\s*\([^)]*\bFROM\b[^)]*\)/gi, " ");
 }
 
 function getReferencedColumnNames(sql: string) {

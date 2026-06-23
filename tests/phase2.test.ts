@@ -63,6 +63,9 @@ describe("phase 2 release controls", () => {
     expect(health.checks).toContain("schema-catalog");
     expect(health.checks).toContain("schema-field-policy");
     expect(health.checks).toContain("workspace-schema-admin");
+    expect(health.checks).toContain("schema-policy-dry-run");
+    expect(health.checks).toContain("workspace-table-allowlist");
+    expect(health.checks).toContain("pii-dry-run-block");
   });
 
   it("ships canary and rollback controls as configured data", () => {
