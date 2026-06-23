@@ -1,7 +1,8 @@
 # GoogleSQL.com
 
-Phase 2 builds on **GoogleSQL Copilot** with admin release controls, dry-run
-execution gates, and rollback readiness for BigQuery workflows.
+Phase 4 builds on **GoogleSQL Copilot** with admin release controls, BigQuery
+dry-run gates, schema governance, multilingual product pages, docs/community
+workflows, pricing controls, and admin user management.
 
 ## Current Scope
 
@@ -14,6 +15,10 @@ execution gates, and rollback readiness for BigQuery workflows.
 - Google and GitHub one-click login
 - Dry-run execution gate
 - Workspace allowlist preview
+- D1-backed schema catalog and field policy controls
+- BigQuery `INFORMATION_SCHEMA` import for schema context
+- Admin user and billing configuration visibility
+- Pricing plan editing and hosted checkout/payment-link routing
 - Health endpoint for deployment checks
 - CI pipeline for lint, typecheck, unit tests, and build
 

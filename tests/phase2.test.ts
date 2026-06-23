@@ -68,6 +68,9 @@ describe("phase 2 release controls", () => {
     expect(health.checks).toContain("pii-dry-run-block");
     expect(health.checks).toContain("bigquery-schema-import");
     expect(health.checks).toContain("information-schema-sync");
+    expect(health.checks).toContain("admin-user-management");
+    expect(health.checks).toContain("billing-config-status");
+    expect(health.checks).toContain("admin-settings-console");
   });
 
   it("ships canary and rollback controls as configured data", () => {

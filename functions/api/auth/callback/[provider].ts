@@ -83,7 +83,13 @@ export async function onRequestGet(context: AuthCallbackContext) {
     } satisfies AuthSession;
 
     try {
-      await upsertAuthenticatedUser(context.env, sessionPayload);
+      const storedUser = await upsertAuthenticatedUser(
+        context.env,
+        sessionPayload
+      );
+      if (storedUser.role) {
+        sessionPayload.role = storedUser.role;
+      }
     } catch (storageError) {
       console.error(
         JSON.stringify({

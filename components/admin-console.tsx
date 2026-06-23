@@ -21,7 +21,11 @@ import {
   UsersRound,
   Zap
 } from "lucide-react";
-import type { AdminState, QueryRunDetail } from "@/lib/admin-store";
+import type {
+  AdminState,
+  AdminUserRecord,
+  QueryRunDetail
+} from "@/lib/admin-store";
 import {
   type PricingInterval,
   type PricingPaymentMode,
@@ -54,6 +58,8 @@ type AdminUser = {
   avatarUrl?: string;
   role: "admin" | "member";
 };
+
+type AdminUserRole = AdminUserRecord["role"];
 
 type AdminLoadState =
   | { status: "loading" }
@@ -140,6 +146,13 @@ type SchemaImportResponse = {
   message?: string;
 };
 
+type AdminUserRoleResponse = {
+  ok?: boolean;
+  user?: AdminUserRecord;
+  code?: string;
+  message?: string;
+};
+
 type SchemaCatalogField =
   AdminState["schemaCatalog"][number]["fields"][number];
 
@@ -177,6 +190,7 @@ export function AdminConsole() {
   const [pendingDocsFeedbackId, setPendingDocsFeedbackId] = useState<
     string | null
   >(null);
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [runDetail, setRunDetail] = useState<RunDetailState>({
     status: "idle"
   });
@@ -775,6 +789,50 @@ export function AdminConsole() {
     }
   }
 
+  async function updateUserRole(user: AdminUserRecord, role: AdminUserRole) {
+    if (user.role === role) {
+      return;
+    }
+
+    setPendingUserId(user.id);
+    setNotice(null);
+
+    try {
+      const response = await fetch(
+        `/api/admin/users/${encodeURIComponent(user.id)}`,
+        {
+          method: "PATCH",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ role })
+        }
+      );
+      const data = (await response.json().catch(() => null)) as
+        | AdminUserRoleResponse
+        | null;
+
+      if (!response.ok || !data?.user) {
+        throw new Error(
+          data?.message ?? "User role update could not be saved."
+        );
+      }
+
+      replaceAdminUser(data.user);
+      setNotice(`${data.user.email} is now a ${data.user.role}.`);
+      void refreshAdminState();
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "User role update could not be saved."
+      );
+    } finally {
+      setPendingUserId(null);
+    }
+  }
+
   function replaceFeatureFlag(featureFlag: Phase2FeatureFlag) {
     setLoadState((current) => {
       if (current.status !== "ready") {
@@ -858,6 +916,24 @@ export function AdminConsole() {
         feedback: current.feedback.map((item) =>
           item.id === feedback.id ? toEditableDocsFeedback(feedback) : item
         )
+      };
+    });
+  }
+
+  function replaceAdminUser(user: AdminUserRecord) {
+    setLoadState((current) => {
+      if (current.status !== "ready") {
+        return current;
+      }
+
+      return {
+        ...current,
+        state: {
+          ...current.state,
+          users: current.state.users.map((item) =>
+            item.id === user.id ? user : item
+          )
+        }
       };
     });
   }
@@ -1095,6 +1171,8 @@ export function AdminConsole() {
             </div>
           </section>
 
+          <SystemSettingsPanel state={state} />
+
           <section className="glass-panel overflow-hidden rounded-lg">
             <SectionHeader
               icon={Activity}
@@ -1331,6 +1409,14 @@ export function AdminConsole() {
             onImport={() => void submitSchemaImport()}
           />
 
+          <UserManagementPanel
+            users={state.users}
+            adminEmails={state.auth.adminEmails}
+            pendingUserId={pendingUserId}
+            currentUserEmail={readyState.user.email}
+            onRoleChange={(user, role) => void updateUserRole(user, role)}
+          />
+
           <section className="glass-panel overflow-hidden rounded-lg">
             <SectionHeader
               icon={UsersRound}
@@ -1527,6 +1613,211 @@ function ConfigMetric({ label, value }: { label: string; value: string }) {
         {value}
       </span>
     </span>
+  );
+}
+
+function SystemSettingsPanel({ state }: { state: AdminState }) {
+  return (
+    <section className="glass-panel overflow-hidden rounded-lg">
+      <SectionHeader
+        icon={LockKeyhole}
+        title="System Settings"
+        action="Auth and billing"
+      />
+      <div className="grid gap-3 p-5 lg:grid-cols-3">
+        <SettingsStatusBlock
+          icon={LockKeyhole}
+          title="OAuth"
+          healthy={state.auth.configured}
+          message={state.auth.message}
+          metrics={[
+            ["Google", state.auth.googleConfigured ? "Ready" : "Missing"],
+            ["GitHub", state.auth.githubConfigured ? "Ready" : "Missing"],
+            [
+              "Admins",
+              state.auth.adminEmails.length
+                ? String(state.auth.adminEmails.length)
+                : "None"
+            ]
+          ]}
+        />
+        <SettingsStatusBlock
+          icon={CreditCard}
+          title="Billing"
+          healthy={state.billing.configured}
+          message={state.billing.message}
+          metrics={[
+            ["Stripe", state.billing.stripeConfigured ? "Ready" : "Missing"],
+            ["API", state.billing.apiVersion ?? "Default"],
+            ["Site", state.billing.siteUrl ?? "Request origin"]
+          ]}
+        />
+        <SettingsStatusBlock
+          icon={Zap}
+          title="BigQuery"
+          healthy={state.bigQuery.configured}
+          message={state.bigQuery.message}
+          metrics={[
+            ["Mode", state.bigQuery.mode],
+            ["Project", state.bigQuery.projectId ?? "Not set"],
+            ["Location", state.bigQuery.location ?? "Default"]
+          ]}
+        />
+      </div>
+    </section>
+  );
+}
+
+function SettingsStatusBlock({
+  icon: Icon,
+  title,
+  healthy,
+  message,
+  metrics
+}: {
+  icon: typeof Activity;
+  title: string;
+  healthy: boolean;
+  message: string;
+  metrics: Array<[string, string]>;
+}) {
+  return (
+    <article
+      className={cn(
+        "rounded-lg border bg-black/[0.14] p-4",
+        healthy
+          ? "border-[#34a853]/20"
+          : "border-[#fbbc05]/20"
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className={cn(
+            "rounded-md border p-2",
+            healthy
+              ? "border-[#34a853]/20 bg-[#34a853]/10 text-[#4ade80]"
+              : "border-[#fbbc05]/20 bg-[#fbbc05]/10 text-[#facc15]"
+          )}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+            <span
+              className={cn(
+                "rounded px-2 py-1 text-[11px] font-semibold",
+                healthy
+                  ? "border border-[#34a853]/25 bg-[#34a853]/10 text-[#4ade80]"
+                  : "border border-[#fbbc05]/25 bg-[#fbbc05]/10 text-[#facc15]"
+              )}
+            >
+              {healthy ? "ready" : "action needed"}
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-slate-500">{message}</p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2">
+        {metrics.map(([label, value]) => (
+          <ConfigMetric key={label} label={label} value={value} />
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function UserManagementPanel({
+  users,
+  adminEmails,
+  pendingUserId,
+  currentUserEmail,
+  onRoleChange
+}: {
+  users: AdminUserRecord[];
+  adminEmails: string[];
+  pendingUserId: string | null;
+  currentUserEmail: string;
+  onRoleChange: (user: AdminUserRecord, role: AdminUserRole) => void;
+}) {
+  const configuredAdminEmails = new Set(adminEmails);
+
+  return (
+    <section className="glass-panel overflow-hidden rounded-lg">
+      <SectionHeader
+        icon={UsersRound}
+        title="User Management"
+        action={`${users.length} accounts`}
+      />
+      <div className="divide-y divide-white/[0.07]">
+        {users.length ? (
+          users.map((user) => {
+            const isPending = pendingUserId === user.id;
+            const isCurrentUser =
+              user.email.toLowerCase() === currentUserEmail.toLowerCase();
+            const isConfiguredAdmin = configuredAdminEmails.has(
+              user.email.toLowerCase()
+            );
+
+            return (
+              <div key={user.id} className="px-5 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-slate-100">
+                        {user.name || user.email}
+                      </p>
+                      <RolePill role={user.role} />
+                      {isConfiguredAdmin ? (
+                        <span className="rounded border border-[#4285f4]/25 bg-[#4285f4]/10 px-2 py-1 text-[11px] font-semibold text-[#93c5fd]">
+                          allowlisted
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-slate-500">
+                      {user.email} / {user.provider}
+                    </p>
+                    <p className="mt-2 text-[11px] font-medium text-slate-600">
+                      Last login: {formatDateTime(user.lastLoginAt)}
+                    </p>
+                  </div>
+                  <label className="grid shrink-0 gap-2 text-[11px] font-semibold text-slate-500">
+                    Role
+                    <select
+                      value={user.role}
+                      disabled={isPending || isCurrentUser}
+                      onChange={(event) =>
+                        onRoleChange(
+                          user,
+                          event.currentTarget.value as AdminUserRole
+                        )
+                      }
+                      className="h-9 rounded-md border border-white/[0.08] bg-black/[0.2] px-2 text-xs text-slate-100 outline-none focus:border-[#4285f4]/45 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <option value="member">member</option>
+                      <option value="admin">admin</option>
+                    </select>
+                  </label>
+                </div>
+                {isCurrentUser ? (
+                  <p className="mt-3 rounded-md border border-white/[0.08] bg-white/[0.035] px-3 py-2 text-xs leading-5 text-slate-500">
+                    Current session. Another administrator must change this
+                    account role.
+                  </p>
+                ) : null}
+              </div>
+            );
+          })
+        ) : (
+          <div className="px-5 py-5">
+            <p className="rounded-lg border border-[#fbbc05]/20 bg-[#fbbc05]/[0.08] px-3 py-2 text-xs leading-5 text-[#fde68a]">
+              No persisted users yet. Accounts appear here after signing in
+              with Google or GitHub while D1 is bound.
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -2452,6 +2743,19 @@ function AccessPill({
   return (
     <span className={cn("rounded px-2 py-1 text-[11px] font-semibold", className)}>
       {access}
+    </span>
+  );
+}
+
+function RolePill({ role }: { role: AdminUserRole }) {
+  const className =
+    role === "admin"
+      ? "border-[#4285f4]/25 bg-[#4285f4]/10 text-[#93c5fd]"
+      : "border-white/[0.08] bg-white/[0.04] text-slate-500";
+
+  return (
+    <span className={cn("rounded px-2 py-1 text-[11px] font-semibold", className)}>
+      {role}
     </span>
   );
 }

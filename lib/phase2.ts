@@ -320,7 +320,10 @@ export function getPhase4Health() {
       "workspace-table-allowlist",
       "pii-dry-run-block",
       "bigquery-schema-import",
-      "information-schema-sync"
+      "information-schema-sync",
+      "admin-user-management",
+      "billing-config-status",
+      "admin-settings-console"
     ]
   };
 }

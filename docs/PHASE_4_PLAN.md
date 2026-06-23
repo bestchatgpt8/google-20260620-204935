@@ -56,6 +56,24 @@ enabled in the Worker deployment.
 - `/api/health` reports Phase 4C checks:
   `bigquery-schema-import` and `information-schema-sync`.
 
+## Phase 4D Admin Operations Scope
+
+- `/api/admin/state` now reports admin OAuth readiness, billing readiness, and
+  persisted user accounts.
+- The admin console includes a System Settings panel for OAuth provider status,
+  `ADMIN_EMAILS`, Stripe Checkout configuration, site URLs, and BigQuery
+  dry-run mode.
+- D1-backed login records are surfaced in a User Management panel with provider,
+  email, role, and last-login metadata.
+- `/api/admin/users/:id` lets admins update a user's stored role.
+- Manually promoted users keep their stored role on later sign-ins unless the
+  signed session is already an `ADMIN_EMAILS` administrator.
+- Admins cannot demote the currently signed-in account from the console.
+- User role changes write `user.role_updated` audit events.
+- `/api/health` reports Phase 4D checks:
+  `admin-user-management`, `billing-config-status`, and
+  `admin-settings-console`.
+
 ## Safety Model
 
 - The schema catalog API requires the same signed OAuth admin session as the
@@ -69,6 +87,8 @@ enabled in the Worker deployment.
   for workspace table allowlists, field queryability, and PII exposure.
 - Schema import requires both D1 persistence and configured BigQuery service
   account credentials. Import requests are admin-only and record an audit event.
+- User role updates require the same signed OAuth admin session as the rest of
+  `/api/admin/*`, require D1 persistence, and are audited.
 
 ## Acceptance Criteria
 
@@ -85,8 +105,14 @@ enabled in the Worker deployment.
   BigQuery request is made.
 - Imported BigQuery policy-tagged columns are blocked by default until an admin
   explicitly changes their field policy.
+- `/api/admin/state` returns `auth`, `billing`, and `users` so admins can see
+  whether login, Stripe Checkout, and account storage are configured.
+- `/api/admin/users/:id` rejects unauthenticated requests and returns
+  `storage_not_configured` without D1 persistence.
 
 ## Remaining Phase 4 Candidate Scope
 
 - Add field-level masking or blocking rules for approved execution paths.
 - Add scheduled schema refresh cadence and import history.
+- Add full billing ledger management for subscriptions, invoices, refunds, and
+  Stripe webhooks.

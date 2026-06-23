@@ -1,5 +1,5 @@
-import type { AuthProvider, AuthSession } from "./auth";
-import { getSessionRole, type AuthRole } from "./auth";
+import type { AuthEnv, AuthProvider, AuthSession } from "./auth";
+import { getSessionRole, parseAdminEmails, type AuthRole } from "./auth";
 import {
   hasBigQueryCredentials,
   type BigQueryEnv
@@ -30,7 +30,18 @@ export type AdminStorageEnv = {
   DB?: D1Database;
 };
 
-export type AdminRuntimeEnv = AdminStorageEnv & BigQueryEnv;
+export type BillingConfigEnv = {
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_API_VERSION?: string;
+  STRIPE_SUCCESS_URL?: string;
+  STRIPE_CANCEL_URL?: string;
+  SITE_URL?: string;
+};
+
+export type AdminRuntimeEnv = AdminStorageEnv &
+  BigQueryEnv &
+  AuthEnv &
+  BillingConfigEnv;
 
 export type StorageMode = "d1" | "seed";
 
@@ -52,13 +63,35 @@ export type AdminState = {
     mode: StorageMode;
     message: string;
   };
+  auth: AuthConfigState;
+  billing: BillingConfigState;
   bigQuery: BigQueryConfigState;
+  users: AdminUserRecord[];
   releaseTracks: typeof releaseTracks;
   featureFlags: Phase2FeatureFlag[];
   reviewQueue: ReviewQueueItem[];
   workspaceAllowlist: WorkspaceAccess[];
   schemaCatalog: SchemaCatalogTable[];
   auditEvents: AuditEvent[];
+};
+
+export type AuthConfigState = {
+  configured: boolean;
+  adminEmails: string[];
+  googleConfigured: boolean;
+  githubConfigured: boolean;
+  cookieSecretConfigured: boolean;
+  message: string;
+};
+
+export type BillingConfigState = {
+  configured: boolean;
+  stripeConfigured: boolean;
+  apiVersion: string | null;
+  siteUrl: string | null;
+  successUrl: string | null;
+  cancelUrl: string | null;
+  message: string;
 };
 
 export type BigQueryConfigState = {
@@ -68,6 +101,19 @@ export type BigQueryConfigState = {
   location: string | null;
   maxBytesBilled: number | null;
   message: string;
+};
+
+export type AdminUserRecord = {
+  id: string;
+  provider: AuthProvider;
+  providerId: string;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+  role: AuthRole;
+  lastLoginAt: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type QueryRunDetail = {
@@ -137,6 +183,7 @@ export type SchemaImportResult = {
 export type UserUpsertResult = {
   persisted: boolean;
   storageBinding: "GOOGLESQL_DB" | "DB" | null;
+  role: AuthRole | null;
 };
 
 export type QueryRunRecordResult = {
@@ -189,6 +236,19 @@ type AuditEventRow = {
   target: string;
   metadata_json: string;
   created_at: string;
+};
+
+type UserRow = {
+  id: string;
+  provider: AuthProvider;
+  provider_id: string;
+  email: string;
+  name: string;
+  avatar_url: string | null;
+  role: AuthRole;
+  last_login_at: string;
+  created_at: string;
+  updated_at: string;
 };
 
 type QueryRunRow = {
@@ -282,12 +342,14 @@ export async function getAdminState(env: AdminRuntimeEnv): Promise<AdminState> {
 
   await ensureAdminSchema(configured.db);
   const [
+    users,
     featureFlags,
     workspaces,
     runs,
     schemaCatalog,
     auditEvents
   ] = await Promise.all([
+    listAdminUsers(configured.db),
     listFeatureFlags(configured.db),
     listWorkspaces(configured.db),
     listReviewQueue(configured.db),
@@ -304,7 +366,10 @@ export async function getAdminState(env: AdminRuntimeEnv): Promise<AdminState> {
       mode: "d1",
       message: `Persisted in Cloudflare D1 binding ${configured.binding}.`
     },
+    auth: getAuthConfigState(env),
+    billing: getBillingConfigState(env),
     bigQuery: getBigQueryConfigState(env),
+    users,
     releaseTracks,
     featureFlags,
     reviewQueue: runs,
@@ -393,13 +458,19 @@ export async function upsertAuthenticatedUser(
   if (!configured) {
     return {
       persisted: false,
-      storageBinding: null
+      storageBinding: null,
+      role: null
     };
   }
 
   await ensureAdminSchema(configured.db);
-  const role = getSessionRole(session);
   const now = new Date().toISOString();
+  const existing = await getAdminUserByEmail(
+    configured.db,
+    session.email.toLowerCase()
+  );
+  const incomingRole = getSessionRole(session);
+  const role = incomingRole === "admin" ? "admin" : existing?.role ?? "member";
 
   await configured.db
     .prepare(
@@ -450,7 +521,82 @@ export async function upsertAuthenticatedUser(
 
   return {
     persisted: true,
-    storageBinding: configured.binding
+    storageBinding: configured.binding,
+    role
+  };
+}
+
+export async function updateAdminUserRole(
+  env: AdminStorageEnv,
+  id: string,
+  role: AuthRole,
+  actorEmail: string
+): Promise<StoreMutationResult<AdminUserRecord>> {
+  if (role !== "admin" && role !== "member") {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_user_role",
+      message: "User role must be admin or member."
+    };
+  }
+
+  const configured = getAdminDb(env);
+  if (!configured) {
+    return storageNotConfigured();
+  }
+
+  await ensureAdminSchema(configured.db);
+  const existing = await getAdminUserById(configured.db, id);
+  if (!existing) {
+    return {
+      ok: false,
+      status: 404,
+      code: "admin_user_not_found",
+      message: "Admin user record was not found."
+    };
+  }
+
+  if (
+    existing.email.toLowerCase() === actorEmail.toLowerCase() &&
+    role !== "admin"
+  ) {
+    return {
+      ok: false,
+      status: 409,
+      code: "cannot_demote_self",
+      message: "Use another administrator account to remove your own admin role."
+    };
+  }
+
+  const updatedAt = new Date().toISOString();
+  await configured.db
+    .prepare(
+      `UPDATE users
+      SET role = ?, updated_at = ?
+      WHERE id = ?`
+    )
+    .bind(role, updatedAt, id)
+    .run();
+
+  await recordAuditEvent(env, {
+    actorEmail,
+    action: "user.role_updated",
+    target: existing.email,
+    metadata: {
+      previousRole: existing.role,
+      role
+    }
+  });
+
+  const updated = await getAdminUserById(configured.db, id);
+  return {
+    ok: true,
+    value: updated ?? {
+      ...existing,
+      role,
+      updatedAt
+    }
   };
 }
 
@@ -1122,13 +1268,58 @@ function createFallbackAdminState(env: AdminRuntimeEnv): AdminState {
       message:
         "Cloudflare D1 binding GOOGLESQL_DB is not configured; showing seed data only."
     },
+    auth: getAuthConfigState(env),
+    billing: getBillingConfigState(env),
     bigQuery: getBigQueryConfigState(env),
+    users: [],
     releaseTracks,
     featureFlags: phase2FeatureFlags,
     reviewQueue,
     workspaceAllowlist,
     schemaCatalog: createSeedSchemaCatalog(),
     auditEvents: fallbackAuditEvents
+  };
+}
+
+function getAuthConfigState(env: AuthEnv): AuthConfigState {
+  const adminEmails = parseAdminEmails(env.ADMIN_EMAILS);
+  const googleConfigured = Boolean(
+    env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+  );
+  const githubConfigured = Boolean(
+    env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
+  );
+  const cookieSecretConfigured = Boolean(env.AUTH_COOKIE_SECRET);
+  const configured =
+    cookieSecretConfigured &&
+    adminEmails.length > 0 &&
+    (googleConfigured || githubConfigured);
+
+  return {
+    configured,
+    adminEmails,
+    googleConfigured,
+    githubConfigured,
+    cookieSecretConfigured,
+    message: configured
+      ? "OAuth, signed session cookies, and administrator allowlist are configured."
+      : "OAuth needs a cookie secret, at least one provider, and ADMIN_EMAILS before admin access is production-ready."
+  };
+}
+
+function getBillingConfigState(env: BillingConfigEnv): BillingConfigState {
+  const stripeConfigured = Boolean(env.STRIPE_SECRET_KEY);
+
+  return {
+    configured: stripeConfigured,
+    stripeConfigured,
+    apiVersion: env.STRIPE_API_VERSION ?? null,
+    siteUrl: env.SITE_URL ?? null,
+    successUrl: env.STRIPE_SUCCESS_URL ?? null,
+    cancelUrl: env.STRIPE_CANCEL_URL ?? null,
+    message: stripeConfigured
+      ? "Stripe Checkout secret is configured. Paid plans can use hosted checkout when their Stripe price id or inline price is valid."
+      : "Stripe Checkout is not configured. Paid plans must use payment links or add STRIPE_SECRET_KEY."
   };
 }
 
@@ -1384,6 +1575,74 @@ async function listWorkspaces(db: D1Database) {
   }));
 }
 
+async function listAdminUsers(db: D1Database) {
+  const response = await db
+    .prepare(
+      `SELECT
+        id,
+        provider,
+        provider_id,
+        email,
+        name,
+        avatar_url,
+        role,
+        last_login_at,
+        created_at,
+        updated_at
+      FROM users
+      ORDER BY role DESC, last_login_at DESC, email`
+    )
+    .all<UserRow>();
+
+  return (response.results ?? []).map(mapUserRow);
+}
+
+async function getAdminUserById(db: D1Database, id: string) {
+  const row = await db
+    .prepare(
+      `SELECT
+        id,
+        provider,
+        provider_id,
+        email,
+        name,
+        avatar_url,
+        role,
+        last_login_at,
+        created_at,
+        updated_at
+      FROM users
+      WHERE id = ?`
+    )
+    .bind(id)
+    .first<UserRow>();
+
+  return row ? mapUserRow(row) : null;
+}
+
+async function getAdminUserByEmail(db: D1Database, email: string) {
+  const row = await db
+    .prepare(
+      `SELECT
+        id,
+        provider,
+        provider_id,
+        email,
+        name,
+        avatar_url,
+        role,
+        last_login_at,
+        created_at,
+        updated_at
+      FROM users
+      WHERE email = ?`
+    )
+    .bind(email.toLowerCase())
+    .first<UserRow>();
+
+  return row ? mapUserRow(row) : null;
+}
+
 async function listSchemaCatalog(db: D1Database) {
   const [tableResponse, fieldResponse] = await Promise.all([
     db
@@ -1619,6 +1878,21 @@ function mapFeatureFlagRow(row: FeatureFlagRow): Phase2FeatureFlag {
     environment: row.environment,
     rollout: row.rollout,
     owner: row.owner,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapUserRow(row: UserRow): AdminUserRecord {
+  return {
+    id: row.id,
+    provider: row.provider,
+    providerId: row.provider_id,
+    email: row.email,
+    name: row.name,
+    avatarUrl: row.avatar_url,
+    role: row.role === "admin" ? "admin" : "member",
+    lastLoginAt: row.last_login_at,
+    createdAt: row.created_at,
     updatedAt: row.updated_at
   };
 }

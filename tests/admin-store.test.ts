@@ -4,6 +4,7 @@ import {
   getAdminDb,
   queueRollback,
   recordQueryDryRun,
+  updateAdminUserRole,
   updateSchemaFieldPolicy,
   updateRunReviewStatus,
   updateFeatureRollout
@@ -19,10 +20,39 @@ describe("phase 3 admin store", () => {
     expect(state.storage.mode).toBe("seed");
     expect(state.bigQuery.configured).toBe(false);
     expect(state.bigQuery.mode).toBe("simulated");
+    expect(state.auth.configured).toBe(false);
+    expect(state.billing.configured).toBe(false);
+    expect(state.users).toEqual([]);
     expect(state.featureFlags.some((flag) => flag.id === "bigquery-run-gate"))
       .toBe(true);
     expect(state.schemaCatalog.some((table) => table.name === "analytics.orders"))
       .toBe(true);
+  });
+
+  it("exposes configured auth and billing state", async () => {
+    const state = await getAdminState({
+      AUTH_COOKIE_SECRET: "test-secret",
+      GOOGLE_CLIENT_ID: "google-client",
+      GOOGLE_CLIENT_SECRET: "google-secret",
+      ADMIN_EMAILS: "owner@example.com, ops@example.com",
+      STRIPE_SECRET_KEY: "sk_test_123",
+      STRIPE_API_VERSION: "2026-02-25.clover",
+      SITE_URL: "https://googlesql.com"
+    });
+
+    expect(state.auth).toMatchObject({
+      configured: true,
+      googleConfigured: true,
+      githubConfigured: false,
+      cookieSecretConfigured: true,
+      adminEmails: ["owner@example.com", "ops@example.com"]
+    });
+    expect(state.billing).toMatchObject({
+      configured: true,
+      stripeConfigured: true,
+      apiVersion: "2026-02-25.clover",
+      siteUrl: "https://googlesql.com"
+    });
   });
 
   it("exposes live BigQuery dry-run configuration when credentials exist", async () => {
@@ -113,6 +143,20 @@ describe("phase 3 admin store", () => {
       {
         queryable: true
       },
+      "owner@example.com"
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "storage_not_configured"
+    });
+  });
+
+  it("rejects user role mutations without D1 persistence", async () => {
+    const result = await updateAdminUserRole(
+      {},
+      "google:123",
+      "admin",
       "owner@example.com"
     );
 
