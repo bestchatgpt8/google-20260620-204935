@@ -284,6 +284,13 @@ export function getPhase2Health() {
   };
 }
 
+export function getPublicHealth() {
+  return {
+    ok: true,
+    service: "googlesql-web"
+  };
+}
+
 export function getPhase3Health() {
   const phase2 = getPhase2Health();
 

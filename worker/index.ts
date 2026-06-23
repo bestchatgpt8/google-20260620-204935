@@ -1,4 +1,4 @@
-import { getPhase4Health } from "../lib/phase2";
+import { getPhase4Health, getPublicHealth } from "../lib/phase2";
 import {
   getPublicSession,
   getSessionRole,
@@ -36,6 +36,7 @@ import { onRequestGet as onAdminPricingPlansGet } from "../functions/api/admin/p
 import { onRequestPatch as onAdminPricingPlanPatch } from "../functions/api/admin/pricing-plans/[id]";
 import { onRequestGet as onAdminDocsFeedbackGet } from "../functions/api/admin/docs-feedback";
 import { onRequestPatch as onAdminDocsFeedbackPatch } from "../functions/api/admin/docs-feedback/[id]";
+import { onRequestPatch as onAdminUserPatch } from "../functions/api/admin/users/[id]";
 import { onRequestPost as onQueryDryRunPost } from "../functions/api/query/dry-run";
 import type { BillingEnv } from "../lib/billing";
 
@@ -125,7 +126,21 @@ function matchApiRoute(
   if (url.pathname === "/api/health") {
     return {
       allowedMethods: ["GET", "HEAD"],
-      handler: () => Response.json(getPhase4Health())
+      handler: () => Response.json(getPublicHealth())
+    };
+  }
+
+  if (url.pathname === "/api/admin/health") {
+    return {
+      allowedMethods: ["GET", "HEAD"],
+      handler: async () => {
+        const auth = await requireAdminSession(request, env);
+        if (!auth.ok) {
+          return auth.response;
+        }
+
+        return jsonResponse(getPhase4Health());
+      }
     };
   }
 
@@ -228,6 +243,21 @@ function matchApiRoute(
           env,
           params: {
             id: pricingPlan[1]
+          }
+        })
+    };
+  }
+
+  const adminUser = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
+  if (adminUser) {
+    return {
+      allowedMethods: ["PATCH"],
+      handler: () =>
+        onAdminUserPatch({
+          request,
+          env,
+          params: {
+            id: adminUser[1]
           }
         })
     };

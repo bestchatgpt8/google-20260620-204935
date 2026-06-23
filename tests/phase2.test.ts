@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   estimateDryRun,
+  getPublicHealth,
   getPhase2Health,
   getPhase3Health,
   getPhase4Health,
@@ -9,6 +10,17 @@ import {
 } from "../lib/phase2";
 
 describe("phase 2 release controls", () => {
+  it("keeps public health metadata minimal", () => {
+    const health = getPublicHealth();
+
+    expect(health).toEqual({
+      ok: true,
+      service: "googlesql-web"
+    });
+    expect("checks" in health).toBe(false);
+    expect("deployment" in health).toBe(false);
+  });
+
   it("blocks destructive SQL before execution", () => {
     const preview = estimateDryRun("DROP TABLE `analytics.orders`;");
 

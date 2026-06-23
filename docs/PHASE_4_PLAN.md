@@ -4,8 +4,9 @@
 
 Move GoogleSQL.com from query dry-run review into workspace-scoped schema
 operations: D1-backed schema catalog, field-level policy controls, admin UI
-management, and health checks that prove the schema management surface is
-enabled in the Worker deployment.
+management, and admin-only health checks that prove the schema management
+surface is enabled in the Worker deployment without exposing deployment
+internals publicly.
 
 ## Phase 4A Scope
 
@@ -24,7 +25,7 @@ enabled in the Worker deployment.
 - Every schema policy change writes an audit event.
 - The admin console exposes a Schema Catalog panel with table row counts,
   queryable field counts, PII counts, and field-level policy toggles.
-- `/api/health` now reports Phase 4 checks:
+- Internal health metadata now reports Phase 4 checks:
   `schema-catalog`, `schema-field-policy`, and `workspace-schema-admin`.
 
 ## Phase 4B Runtime Policy Scope
@@ -38,7 +39,7 @@ enabled in the Worker deployment.
 - Field policy blocks dry-runs that reference fields marked `queryable: false`.
 - Selected fields marked `pii: true` block dry-run approval before live BigQuery
   dry-run can be requested.
-- `/api/health` reports Phase 4B runtime checks:
+- Internal health metadata reports Phase 4B runtime checks:
   `schema-policy-dry-run`, `workspace-table-allowlist`, and
   `pii-dry-run-block`.
 
@@ -53,7 +54,7 @@ enabled in the Worker deployment.
   later import refreshes the same table and column.
 - BigQuery policy-tagged columns default to `pii: true` and `queryable: false`
   on first import.
-- `/api/health` reports Phase 4C checks:
+- Internal health metadata reports Phase 4C checks:
   `bigquery-schema-import` and `information-schema-sync`.
 
 ## Phase 4D Admin Operations Scope
@@ -70,7 +71,7 @@ enabled in the Worker deployment.
   signed session is already an `ADMIN_EMAILS` administrator.
 - Admins cannot demote the currently signed-in account from the console.
 - User role changes write `user.role_updated` audit events.
-- `/api/health` reports Phase 4D checks:
+- Internal health metadata reports Phase 4D checks:
   `admin-user-management`, `billing-config-status`, and
   `admin-settings-console`.
 
@@ -89,6 +90,8 @@ enabled in the Worker deployment.
   account credentials. Import requests are admin-only and record an audit event.
 - User role updates require the same signed OAuth admin session as the rest of
   `/api/admin/*`, require D1 persistence, and are audited.
+- Public `/api/health` returns only the minimal service status. Detailed
+  deployment and check metadata is available through admin-only routes.
 
 ## Acceptance Criteria
 
@@ -98,7 +101,8 @@ enabled in the Worker deployment.
 - Schema policy PATCH requests without D1 return `storage_not_configured`.
 - Schema policy PATCH requests with D1 update the field row and create an audit
   event.
-- The Worker health response includes the Phase 4 schema checks.
+- Public `/api/health` does not expose deployment, rollback, or check metadata.
+- Admin-only health metadata includes the Phase 4 schema checks.
 - Policy-blocked dry-runs return `schema_policy_blocked` and do not request a
   live BigQuery dry-run.
 - Admin schema imports without D1 return `storage_not_configured` before any
