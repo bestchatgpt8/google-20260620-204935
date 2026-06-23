@@ -318,7 +318,9 @@ export function getPhase4Health() {
       "workspace-schema-admin",
       "schema-policy-dry-run",
       "workspace-table-allowlist",
-      "pii-dry-run-block"
+      "pii-dry-run-block",
+      "bigquery-schema-import",
+      "information-schema-sync"
     ]
   };
 }

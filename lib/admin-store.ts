@@ -109,6 +109,31 @@ export type SchemaCatalogTable = {
   fields: SchemaCatalogField[];
 };
 
+export type SchemaImportFieldInput = {
+  name: string;
+  type: string;
+  mode: "NULLABLE" | "REQUIRED";
+  description?: string;
+  pii?: boolean;
+  queryable?: boolean;
+  usedInExamples?: boolean;
+};
+
+export type SchemaImportTableInput = {
+  workspace: string;
+  name: string;
+  description: string;
+  rowCount: number;
+  fields: SchemaImportFieldInput[];
+};
+
+export type SchemaImportResult = {
+  workspace: string;
+  importedTables: number;
+  importedFields: number;
+  importedAt: string;
+};
+
 export type UserUpsertResult = {
   persisted: boolean;
   storageBinding: "GOOGLESQL_DB" | "DB" | null;
@@ -674,6 +699,132 @@ export async function updateSchemaFieldPolicy(
   return {
     ok: true,
     value: updated
+  };
+}
+
+export async function importSchemaCatalog(
+  env: AdminStorageEnv,
+  input: {
+    workspace: string;
+    tables: SchemaImportTableInput[];
+  },
+  actorEmail: string
+): Promise<StoreMutationResult<SchemaImportResult>> {
+  const configured = getAdminDb(env);
+  if (!configured) {
+    return storageNotConfigured();
+  }
+
+  const workspace = normalizeWorkspace(input.workspace);
+  const tables = input.tables.filter((table) => table.fields.length > 0);
+  if (!tables.length) {
+    return {
+      ok: false,
+      status: 400,
+      code: "schema_import_empty",
+      message: "No BigQuery schema tables were returned for import."
+    };
+  }
+
+  await ensureAdminSchema(configured.db);
+  const importedAt = new Date().toISOString();
+  let importedFields = 0;
+
+  for (const table of tables) {
+    const tableName = table.name.trim();
+    const tableId =
+      (await getSchemaTableId(configured.db, workspace, tableName)) ??
+      createImportedSchemaTableId(workspace, tableName);
+
+    await configured.db
+      .prepare(
+        `INSERT INTO schema_tables (
+          id,
+          workspace,
+          table_name,
+          description,
+          row_count,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace, table_name) DO UPDATE SET
+          description = excluded.description,
+          row_count = excluded.row_count,
+          updated_at = excluded.updated_at`
+      )
+      .bind(
+        tableId,
+        workspace,
+        tableName,
+        table.description,
+        table.rowCount,
+        importedAt
+      )
+      .run();
+
+    for (const field of table.fields) {
+      const fieldId = `${tableId}-${slugify(field.name)}`;
+      const pii = field.pii ?? isSensitiveField(field.name);
+      const queryable = field.queryable ?? !pii;
+
+      await configured.db
+        .prepare(
+          `INSERT INTO schema_fields (
+            id,
+            table_id,
+            field_name,
+            field_type,
+            mode,
+            description,
+            pii,
+            queryable,
+            used_in_examples,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(table_id, field_name) DO UPDATE SET
+            field_type = excluded.field_type,
+            mode = excluded.mode,
+            description = excluded.description,
+            used_in_examples = excluded.used_in_examples,
+            updated_at = excluded.updated_at`
+        )
+        .bind(
+          fieldId,
+          tableId,
+          field.name,
+          field.type,
+          field.mode,
+          field.description ?? getFieldDescription({
+            name: field.name,
+            type: normalizeSchemaFieldType(field.type)
+          }),
+          pii ? 1 : 0,
+          queryable ? 1 : 0,
+          field.usedInExamples ?? isExampleField(field.name) ? 1 : 0,
+          importedAt
+        )
+        .run();
+      importedFields += 1;
+    }
+  }
+
+  await recordAuditEvent(env, {
+    actorEmail,
+    action: "schema_catalog.imported",
+    target: workspace,
+    metadata: {
+      importedTables: tables.length,
+      importedFields
+    }
+  });
+
+  return {
+    ok: true,
+    value: {
+      workspace,
+      importedTables: tables.length,
+      importedFields,
+      importedAt
+    }
   };
 }
 
@@ -1302,6 +1453,23 @@ async function getSchemaField(db: D1Database, id: string) {
   return row ? mapSchemaFieldRow(row) : null;
 }
 
+async function getSchemaTableId(
+  db: D1Database,
+  workspace: string,
+  tableName: string
+) {
+  const row = await db
+    .prepare(
+      `SELECT id
+      FROM schema_tables
+      WHERE workspace = ? AND table_name = ?`
+    )
+    .bind(workspace, tableName)
+    .first<{ id: string }>();
+
+  return row?.id ?? null;
+}
+
 async function listReviewQueue(db: D1Database) {
   const response = await db
     .prepare(
@@ -1513,6 +1681,16 @@ function createSchemaTableId(tableName: string) {
   return `table-${slugify(tableName)}`;
 }
 
+function createImportedSchemaTableId(workspace: string, tableName: string) {
+  const firstTablePart = tableName.split(".")[0]?.toLowerCase();
+
+  if (firstTablePart === workspace) {
+    return createSchemaTableId(tableName);
+  }
+
+  return createSchemaTableId(`${workspace}.${tableName}`);
+}
+
 function slugify(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
@@ -1550,6 +1728,20 @@ function getFieldDescription(field: SchemaField) {
 
   const label = field.name.replace(/_/g, " ");
   return `${label.charAt(0).toUpperCase()}${label.slice(1)} column.`;
+}
+
+function normalizeSchemaFieldType(value: string): SchemaField["type"] {
+  if (
+    value === "INT64" ||
+    value === "DATE" ||
+    value === "STRING" ||
+    value === "FLOAT64" ||
+    value === "TIMESTAMP"
+  ) {
+    return value;
+  }
+
+  return "STRING";
 }
 
 function isSensitiveField(fieldName: string) {

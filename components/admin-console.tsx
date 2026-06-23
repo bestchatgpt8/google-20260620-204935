@@ -91,6 +91,14 @@ type EditableDocsFeedback = AdminDocsFeedback & {
   answerDraft: string;
 };
 
+type SchemaImportDraft = {
+  workspace: string;
+  dataset: string;
+  projectId: string;
+  tablePrefix: string;
+  tableLimit: string;
+};
+
 type RunDetailResponse = {
   ok?: boolean;
   run?: QueryRunDetail;
@@ -119,6 +127,19 @@ type DocsFeedbackAdminResponse = {
   message?: string;
 };
 
+type SchemaImportResponse = {
+  ok?: boolean;
+  import?: {
+    workspace: string;
+    importedTables: number;
+    importedFields: number;
+    projectId: string;
+    dataset: string;
+  };
+  code?: string;
+  message?: string;
+};
+
 type SchemaCatalogField =
   AdminState["schemaCatalog"][number]["fields"][number];
 
@@ -137,6 +158,14 @@ export function AdminConsole() {
   const [pendingSchemaFieldId, setPendingSchemaFieldId] = useState<
     string | null
   >(null);
+  const [pendingSchemaImport, setPendingSchemaImport] = useState(false);
+  const [schemaImportDraft, setSchemaImportDraft] = useState<SchemaImportDraft>({
+    workspace: "analytics",
+    dataset: "analytics",
+    projectId: "",
+    tablePrefix: "",
+    tableLimit: "50"
+  });
   const [pricingLoadState, setPricingLoadState] = useState<PricingLoadState>({
     status: "loading"
   });
@@ -515,6 +544,45 @@ export function AdminConsole() {
       );
     } finally {
       setPendingSchemaFieldId(null);
+    }
+  }
+
+  async function submitSchemaImport() {
+    const tableLimit = Number(schemaImportDraft.tableLimit);
+    setPendingSchemaImport(true);
+    setNotice(null);
+
+    try {
+      const response = await fetch("/api/admin/schema-import", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          workspace: schemaImportDraft.workspace,
+          dataset: schemaImportDraft.dataset,
+          projectId: schemaImportDraft.projectId,
+          tablePrefix: schemaImportDraft.tablePrefix,
+          tableLimit: Number.isFinite(tableLimit) ? tableLimit : undefined
+        })
+      });
+      const data = (await response.json().catch(() => null)) as
+        | SchemaImportResponse
+        | null;
+
+      if (!response.ok || !isSchemaImportResponse(data)) {
+        throw new Error(data?.message ?? "Schema import failed.");
+      }
+
+      setNotice(
+        `Imported ${data.import.importedTables} tables and ${data.import.importedFields} fields from ${data.import.projectId}.${data.import.dataset}.`
+      );
+      void refreshAdminState();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Schema import failed.");
+    } finally {
+      setPendingSchemaImport(false);
     }
   }
 
@@ -1249,9 +1317,18 @@ export function AdminConsole() {
           <SchemaCatalogPanel
             tables={state.schemaCatalog}
             pendingFieldId={pendingSchemaFieldId}
+            importDraft={schemaImportDraft}
+            pendingImport={pendingSchemaImport}
             onPolicyChange={(field, patch) =>
               void updateSchemaFieldPolicy(field, patch)
             }
+            onImportDraftChange={(patch) =>
+              setSchemaImportDraft((current) => ({
+                ...current,
+                ...patch
+              }))
+            }
+            onImport={() => void submitSchemaImport()}
           />
 
           <section className="glass-panel overflow-hidden rounded-lg">
@@ -2065,14 +2142,22 @@ function RunDetailPanel({
 function SchemaCatalogPanel({
   tables,
   pendingFieldId,
-  onPolicyChange
+  importDraft,
+  pendingImport,
+  onPolicyChange,
+  onImportDraftChange,
+  onImport
 }: {
   tables: AdminState["schemaCatalog"];
   pendingFieldId: string | null;
+  importDraft: SchemaImportDraft;
+  pendingImport: boolean;
   onPolicyChange: (
     field: SchemaCatalogField,
     patch: Pick<Partial<SchemaCatalogField>, "queryable" | "pii">
   ) => void;
+  onImportDraftChange: (patch: Partial<SchemaImportDraft>) => void;
+  onImport: () => void;
 }) {
   return (
     <section className="glass-panel overflow-hidden rounded-lg">
@@ -2081,6 +2166,101 @@ function SchemaCatalogPanel({
         title="Schema Catalog"
         action={`${tables.length} tables`}
       />
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onImport();
+        }}
+        className="border-b border-white/[0.07] p-5"
+      >
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <label className="grid gap-1.5 text-xs font-semibold text-slate-400">
+            Workspace
+            <input
+              value={importDraft.workspace}
+              onChange={(event) =>
+                onImportDraftChange({
+                  workspace: event.currentTarget.value
+                })
+              }
+              className="focus-ring h-10 rounded-lg border border-white/[0.08] bg-black/[0.22] px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600"
+              placeholder="analytics"
+            />
+          </label>
+          <label className="grid gap-1.5 text-xs font-semibold text-slate-400">
+            Dataset
+            <input
+              value={importDraft.dataset}
+              onChange={(event) =>
+                onImportDraftChange({
+                  dataset: event.currentTarget.value
+                })
+              }
+              className="focus-ring h-10 rounded-lg border border-white/[0.08] bg-black/[0.22] px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600"
+              placeholder="analytics"
+            />
+          </label>
+          <label className="grid gap-1.5 text-xs font-semibold text-slate-400">
+            Project override
+            <input
+              value={importDraft.projectId}
+              onChange={(event) =>
+                onImportDraftChange({
+                  projectId: event.currentTarget.value
+                })
+              }
+              className="focus-ring h-10 rounded-lg border border-white/[0.08] bg-black/[0.22] px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600"
+              placeholder="service account project"
+            />
+          </label>
+          <div className="grid grid-cols-[minmax(0,1fr)_92px] gap-3">
+            <label className="grid gap-1.5 text-xs font-semibold text-slate-400">
+              Table prefix
+              <input
+                value={importDraft.tablePrefix}
+                onChange={(event) =>
+                  onImportDraftChange({
+                    tablePrefix: event.currentTarget.value
+                  })
+                }
+                className="focus-ring h-10 rounded-lg border border-white/[0.08] bg-black/[0.22] px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600"
+                placeholder="optional"
+              />
+            </label>
+            <label className="grid gap-1.5 text-xs font-semibold text-slate-400">
+              Limit
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={importDraft.tableLimit}
+                onChange={(event) =>
+                  onImportDraftChange({
+                    tableLimit: event.currentTarget.value
+                  })
+                }
+                className="focus-ring h-10 rounded-lg border border-white/[0.08] bg-black/[0.22] px-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600"
+              />
+            </label>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs leading-5 text-slate-500">
+            Uses BigQuery INFORMATION_SCHEMA and preserves existing field
+            policy toggles.
+          </p>
+          <button
+            type="submit"
+            disabled={pendingImport}
+            className="focus-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#4285f4] px-4 text-xs font-semibold text-white shadow-[0_0_18px_rgba(66,133,244,0.22)] transition hover:bg-[#5b9bff] disabled:cursor-wait disabled:opacity-60"
+          >
+            <RefreshCcw
+              className={cn("h-4 w-4", pendingImport && "animate-spin")}
+            />
+            Import
+          </button>
+        </div>
+      </form>
       {tables.length ? (
         <div className="divide-y divide-white/[0.07]">
           {tables.map((table) => {
@@ -2441,6 +2621,22 @@ function isSchemaFieldResponse(value: unknown): value is {
     value.ok === true &&
     isRecord(value.schemaField) &&
     typeof value.schemaField.id === "string"
+  );
+}
+
+function isSchemaImportResponse(value: unknown): value is {
+  ok: true;
+  import: NonNullable<SchemaImportResponse["import"]>;
+} {
+  return (
+    isRecord(value) &&
+    value.ok === true &&
+    isRecord(value.import) &&
+    typeof value.import.workspace === "string" &&
+    typeof value.import.importedTables === "number" &&
+    typeof value.import.importedFields === "number" &&
+    typeof value.import.projectId === "string" &&
+    typeof value.import.dataset === "string"
   );
 }
 

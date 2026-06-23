@@ -20,6 +20,24 @@ export type BigQueryDryRunResult = QueryRunPreview & {
   configured: boolean;
 };
 
+export type BigQueryQueryRow = Record<string, string | number | boolean | null>;
+
+export type BigQueryQueryResult =
+  | {
+      ok: true;
+      rows: BigQueryQueryRow[];
+      totalRows: number;
+      jobReference?: {
+        projectId?: string;
+        location?: string;
+      };
+    }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+    };
+
 type BigQueryJobResponse = {
   jobReference?: {
     projectId?: string;
@@ -31,6 +49,30 @@ type BigQueryJobResponse = {
       totalBytesProcessed?: string;
     };
   };
+};
+
+type BigQueryQueryResponse = {
+  schema?: {
+    fields?: Array<{
+      name?: string;
+      type?: string;
+    }>;
+  };
+  rows?: Array<{
+    f?: Array<{
+      v?: unknown;
+    }>;
+  }>;
+  totalRows?: string;
+  jobComplete?: boolean;
+  jobReference?: {
+    projectId?: string;
+    location?: string;
+  };
+  errors?: Array<{
+    reason?: string;
+    message?: string;
+  }>;
 };
 
 type GoogleTokenResponse = {
@@ -128,6 +170,73 @@ export async function runBigQueryDryRun(
       code: "bigquery_request_failed",
       message: error instanceof Error ? error.message : "BigQuery request failed."
     });
+  }
+}
+
+export async function runBigQueryQuery(
+  sql: string,
+  env: BigQueryEnv
+): Promise<BigQueryQueryResult> {
+  if (!hasBigQueryCredentials(env)) {
+    return {
+      ok: false,
+      code: "bigquery_not_configured",
+      message:
+        "BigQuery service account credentials are required for schema import."
+    };
+  }
+
+  try {
+    const accessToken = await createBigQueryAccessToken(env);
+    const response = await fetch(createQueriesUrl(env.BIGQUERY_PROJECT_ID), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(createQueryRequest(sql, env))
+    });
+
+    if (!response.ok) {
+      const error = await parseGoogleApiError(response);
+
+      return {
+        ok: false,
+        code: error.code,
+        message: error.message
+      };
+    }
+
+    const query = (await response.json()) as BigQueryQueryResponse;
+    if (query.jobComplete === false) {
+      return {
+        ok: false,
+        code: "bigquery_query_incomplete",
+        message:
+          "BigQuery schema import query did not finish within the request timeout."
+      };
+    }
+
+    if (query.errors?.length) {
+      return {
+        ok: false,
+        code: query.errors[0]?.reason ?? "bigquery_query_error",
+        message: query.errors[0]?.message ?? "BigQuery query failed."
+      };
+    }
+
+    return {
+      ok: true,
+      rows: parseBigQueryRows(query),
+      totalRows: Number(query.totalRows ?? query.rows?.length ?? 0),
+      jobReference: query.jobReference
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: "bigquery_query_failed",
+      message: error instanceof Error ? error.message : "BigQuery query failed."
+    };
   }
 }
 
@@ -257,6 +366,26 @@ function createDryRunJobRequest(sql: string, env: BigQueryEnv) {
   };
 }
 
+function createQueryRequest(sql: string, env: BigQueryEnv) {
+  const query: Record<string, unknown> = {
+    query: sql,
+    useLegacySql: false,
+    useQueryCache: false,
+    timeoutMs: 30_000,
+    maxResults: 10_000
+  };
+
+  if (env.BIGQUERY_LOCATION) {
+    query.location = env.BIGQUERY_LOCATION;
+  }
+
+  if (env.BIGQUERY_MAX_BYTES_BILLED) {
+    query.maximumBytesBilled = env.BIGQUERY_MAX_BYTES_BILLED;
+  }
+
+  return query;
+}
+
 async function createBigQueryAccessToken(env: BigQueryEnv) {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const assertion = await signJwt(
@@ -329,6 +458,12 @@ function createJobsInsertUrl(projectId: string | undefined) {
   )}/jobs`;
 }
 
+function createQueriesUrl(projectId: string | undefined) {
+  return `https://bigquery.googleapis.com/bigquery/v2/projects/${encodeURIComponent(
+    projectId ?? ""
+  )}/queries`;
+}
+
 function getProcessedBytes(job: BigQueryJobResponse) {
   const value =
     job.statistics?.query?.totalBytesProcessed ??
@@ -362,6 +497,42 @@ async function parseGoogleApiError(response: Response) {
       message: response.statusText
     };
   }
+}
+
+function parseBigQueryRows(query: BigQueryQueryResponse): BigQueryQueryRow[] {
+  const fields = query.schema?.fields ?? [];
+
+  return (query.rows ?? []).map((row) => {
+    const record: BigQueryQueryRow = {};
+
+    fields.forEach((field, index) => {
+      const name = field.name;
+      if (!name) {
+        return;
+      }
+
+      record[name] = normalizeBigQueryValue(row.f?.[index]?.v);
+    });
+
+    return record;
+  });
+}
+
+function normalizeBigQueryValue(value: unknown) {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
+    return value;
+  }
+
+  if (typeof value === "undefined") {
+    return null;
+  }
+
+  return JSON.stringify(value);
 }
 
 function pemToArrayBuffer(pem: string) {

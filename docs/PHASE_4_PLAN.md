@@ -42,6 +42,20 @@ enabled in the Worker deployment.
   `schema-policy-dry-run`, `workspace-table-allowlist`, and
   `pii-dry-run-block`.
 
+## Phase 4C BigQuery Schema Import Scope
+
+- `/api/admin/schema-import` lets admins import schema metadata from BigQuery
+  `INFORMATION_SCHEMA.TABLES` and `INFORMATION_SCHEMA.COLUMNS`.
+- The admin console exposes workspace, dataset, project override, table prefix,
+  and table limit controls for schema import.
+- Imported tables and fields are upserted into Cloudflare D1.
+- Existing field-level `queryable` and `pii` policy toggles are preserved when a
+  later import refreshes the same table and column.
+- BigQuery policy-tagged columns default to `pii: true` and `queryable: false`
+  on first import.
+- `/api/health` reports Phase 4C checks:
+  `bigquery-schema-import` and `information-schema-sync`.
+
 ## Safety Model
 
 - The schema catalog API requires the same signed OAuth admin session as the
@@ -53,6 +67,8 @@ enabled in the Worker deployment.
 - Runtime query validation keeps the existing static safety checks for
   destructive operations and cost hints, then overlays Phase 4B catalog policy
   for workspace table allowlists, field queryability, and PII exposure.
+- Schema import requires both D1 persistence and configured BigQuery service
+  account credentials. Import requests are admin-only and record an audit event.
 
 ## Acceptance Criteria
 
@@ -65,9 +81,12 @@ enabled in the Worker deployment.
 - The Worker health response includes the Phase 4 schema checks.
 - Policy-blocked dry-runs return `schema_policy_blocked` and do not request a
   live BigQuery dry-run.
+- Admin schema imports without D1 return `storage_not_configured` before any
+  BigQuery request is made.
+- Imported BigQuery policy-tagged columns are blocked by default until an admin
+  explicitly changes their field policy.
 
 ## Remaining Phase 4 Candidate Scope
 
-- Add schema import/sync from BigQuery `INFORMATION_SCHEMA`.
 - Add field-level masking or blocking rules for approved execution paths.
-- Add admin controls for workspace-specific table imports and refresh cadence.
+- Add scheduled schema refresh cadence and import history.

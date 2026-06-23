@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   hasBigQueryCredentials,
   normalizeBigQueryPrivateKey,
-  runBigQueryDryRun
+  runBigQueryDryRun,
+  runBigQueryQuery
 } from "../lib/bigquery";
 
 const boundedSql =
@@ -58,5 +59,14 @@ describe("bigquery dry-run client", () => {
     ).toContain(
       "\nabc\n"
     );
+  });
+
+  it("requires credentials for metadata queries", async () => {
+    const result = await runBigQueryQuery("SELECT 1", {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: "bigquery_not_configured"
+    });
   });
 });
